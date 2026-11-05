@@ -1,0 +1,16 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+  functions = "netlify/functions"
+
+[[redirects]]
+  from = "/api/deriv-pat-accounts"
+  to = "/.netlify/functions/deriv-pat-accounts"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/deriv-pat-otp"
+  to = "/.netlify/functions/deriv-pat-otp"
+  status = 200
+  force = true
