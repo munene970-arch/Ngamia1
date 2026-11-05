@@ -207,7 +207,8 @@ class DerivWebSocketService {
     this.openSocket(this.connectGeneration);
   }
 
-  public connectWithPatAccount(account: DerivPatAccount) {
+  public connectWithPatAccount(account: DerivPatAccount, appId?: string) {
+    this.appId = appId?.trim() || this.appId;
     this.token = null;
     this.isPatOtpConnection = true;
     this.patAccountId = account.account_id;
@@ -518,8 +519,8 @@ class DerivWebSocketService {
     if (clientId && this.pendingTrades.has(clientId)) this.cancelPendingTrade(String(clientId), `${code}: ${message}`);
     const contractId = data.echo_req?.contract_id;
     if (contractId) this.clearSettlementPolling(String(contractId));
-    if (this.isAuthorized) {
-      this.notifyAuth({ isAuthorized: this.isAuthorized, loginid: this.cachedLoginId, email: this.cachedEmail, currency: this.currency, appId: this.appId, activeEndpoint: this.activeEndpointUrl, error: `${code}: ${message}` });
+    if (this.isAuthorized || this.isPatOtpConnection) {
+      this.notifyAuth({ isAuthorized: this.isAuthorized, loginid: this.cachedLoginId, email: this.cachedEmail, currency: this.currency, isVirtual: this.cachedIsVirtual, appId: this.appId, activeEndpoint: this.activeEndpointUrl, error: `${code}: ${message}` });
     }
   }
 
