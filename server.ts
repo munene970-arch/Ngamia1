@@ -32,6 +32,112 @@ function getAiClient(): GoogleGenAI {
   return aiClient;
 }
 
+
+const DERIV_TRADING_API = 'https://api.derivws.com/trading/v1';
+const derivPatRateHits = new Map<string, number[]>();
+function derivPatRequestAllowed(req: express.Request): boolean {
+  const origin = req.headers.origin;
+  if (!origin) return false;
+  const allowed = (process.env.DERIV_ALLOWED_ORIGINS || process.env.APP_URL || '')
+    .split(',').map(value => value.trim()).filter(Boolean);
+  try {
+    const originUrl = new URL(origin);
+    if (allowed.some(value => value === origin)) return true;
+    return originUrl.host === req.get('host');
+  } catch { return false; }
+}
+function derivPatRateLimited(req: express.Request): boolean {
+  const key = String(req.ip || req.socket.remoteAddress || 'unknown');
+  const now = Date.now();
+  const recent = (derivPatRateHits.get(key) || []).filter(time => now - time < 60_000);
+  recent.push(now);
+  derivPatRateHits.set(key, recent);
+  return recent.length > 20;
+}
+function readDerivPatBody(req: express.Request) {
+  const length = Number(req.headers['content-length'] || 0);
+  if (length > 12_000) throw Object.assign(new Error('Request is too large.'), { status: 413 });
+  const body = req.body || {};
+  if (JSON.stringify(body).length > 12_000) throw Object.assign(new Error('Request is too large.'), { status: 413 });
+  const appId = String(body.app_id || '').trim();
+  const pat = String(body.pat || '').trim();
+  if (!/^\d{1,12}$/.test(appId)) throw Object.assign(new Error('Enter a valid numeric Deriv App ID.'), { status: 400 });
+  if (pat.length < 10 || pat.length > 4096) throw Object.assign(new Error('Enter a valid Deriv PAT.'), { status: 400 });
+  return { appId, pat };
+}
+async function derivPatFetch(url: string, creds: { appId: string; pat: string }, method = 'GET') {
+  const response = await fetch(url, {
+    method,
+    headers: { 'Deriv-App-ID': creds.appId, Authorization: `Bearer ${creds.pat}`, Accept: 'application/json' },
+    signal: AbortSignal.timeout(12_000),
+  });
+  const raw = await response.text();
+  let payload: any = {};
+  try { payload = raw ? JSON.parse(raw) : {}; } catch {}
+  if (!response.ok) {
+    throw Object.assign(new Error(`Deriv rejected the request (HTTP ${response.status}). Check your App ID, PAT, and token scopes.`), {
+      status: response.status >= 400 && response.status < 500 ? response.status : 502,
+    });
+  }
+  return payload;
+}
+function derivPatGuard(req: express.Request, res: express.Response): boolean {
+  if (!derivPatRequestAllowed(req)) { res.status(403).json({ success: false, error: 'Request origin is not allowed.' }); return false; }
+  if (derivPatRateLimited(req)) { res.status(429).json({ success: false, error: 'Too many requests. Try again shortly.' }); return false; }
+  return true;
+}
+async function handleDerivPatAccounts(req: express.Request, res: express.Response): Promise<void> {
+  if (req.method !== 'POST') { res.status(405).json({ success: false, error: 'Method not allowed.' }); return; }
+  if (!derivPatGuard(req, res)) return;
+  try {
+    const creds = readDerivPatBody(req);
+    const payload = await derivPatFetch(`${DERIV_TRADING_API}/options/accounts`, creds);
+    const rows = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload?.data?.accounts) ? payload.data.accounts : [];
+    const accounts = rows.map((item: any) => ({
+      account_id: String(item.account_id || item.id || ''),
+      loginid: String(item.loginid || item.login_id || ''),
+      balance: String(item.balance ?? '0'),
+      currency: String(item.currency || 'USD'),
+      is_virtual: Boolean(item.is_virtual ?? item.isVirtual ?? String(item.account_id || '').startsWith('V')),
+      account_type: String(item.account_type || item.type || ''),
+    })).filter((item: any) => item.account_id);
+    res.set('Cache-Control', 'no-store').json({ success: true, accounts });
+  } catch (error: any) {
+    return res.status(Number.isInteger(error.status) ? error.status : 502)
+      .set('Cache-Control', 'no-store').json({ success: false, error: error.message || 'Unable to retrieve Deriv accounts.' });
+  }
+}
+async function handleDerivPatOtp(req: express.Request, res: express.Response): Promise<void> {
+  if (req.method !== 'POST') { res.status(405).json({ success: false, error: 'Method not allowed.' }); return; }
+  if (!derivPatGuard(req, res)) return;
+  try {
+    const creds = readDerivPatBody(req);
+    const accountId = String(req.body?.account_id || '').trim();
+    if (!accountId || accountId.length > 128) { res.status(400).json({ success: false, error: 'A valid Deriv account ID is required.' }); return; }
+    const list = await derivPatFetch(`${DERIV_TRADING_API}/options/accounts`, creds);
+    const rows = Array.isArray(list?.data) ? list.data : Array.isArray(list?.data?.accounts) ? list.data.accounts : [];
+    if (!rows.some((item: any) => String(item.account_id || item.id || '') === accountId)) {
+      return res.status(403).json({ success: false, error: 'This account is not available to the supplied Deriv PAT.' });
+    }
+    const result = await derivPatFetch(`${DERIV_TRADING_API}/options/accounts/${encodeURIComponent(accountId)}/otp`, creds, 'POST');
+    const url = result?.data?.url || result?.url;
+    if (typeof url !== 'string') throw Object.assign(new Error('Deriv did not return an authenticated WebSocket URL.'), { status: 502 });
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'wss:' || !(parsed.hostname === 'derivws.com' || parsed.hostname.endsWith('.derivws.com'))) {
+      throw Object.assign(new Error('Deriv returned an unexpected WebSocket host.'), { status: 502 });
+    }
+    res.set('Cache-Control', 'no-store').json({ success: true, url, account_id: accountId });
+  } catch (error: any) {
+    return res.status(Number.isInteger(error.status) ? error.status : 502)
+      .set('Cache-Control', 'no-store').json({ success: false, error: error.message || 'Unable to authenticate the Deriv account.' });
+  }
+}
+app.post('/api/deriv-pat-accounts', handleDerivPatAccounts);
+app.post('/api/deriv-pat-otp', handleDerivPatOtp);
+app.post('/.netlify/functions/deriv-pat-accounts', handleDerivPatAccounts);
+app.post('/.netlify/functions/deriv-pat-otp', handleDerivPatOtp);
+
+
 // Health check endpoint
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok", service: "Deriv Trading Hub Backend" });

@@ -1,5 +1,6 @@
 import { MarketSymbol, Tick, ActiveContract } from '../types/deriv';
 import { REGISTERED_DERIV_APP_ID } from '../config/deriv';
+import { clearDerivPatCredentials, fetchDerivPatOtpUrl, DerivPatAccount } from './derivPatConnection';
 import { strategyShield } from './strategyShield';
 
 export type TickListener = (tick: Tick) => void;
@@ -100,6 +101,9 @@ class DerivWebSocketService {
   private ws: WebSocket | null = null;
   private appId = REGISTERED_DERIV_APP_ID;
   private token: string | null = null;
+  private isPatOtpConnection = false;
+  private patAccountId: string | null = null;
+  private patAccountIsVirtual = false;
   private currency = 'USD';
   private isConnected = false;
   private isAuthorized = false;
@@ -190,7 +194,29 @@ class DerivWebSocketService {
 
   public connect(appId: string = REGISTERED_DERIV_APP_ID, rawToken?: string) {
     this.appId = appId?.trim() || REGISTERED_DERIV_APP_ID;
+    clearDerivPatCredentials();
+    this.isPatOtpConnection = false;
+    this.patAccountId = null;
     this.token = this.sanitizeToken(rawToken);
+    this.intentionallyClosed = false;
+    this.isAuthorized = false;
+    this.isConnected = false;
+    this.reconnectAttempts = 0;
+    this.connectGeneration += 1;
+    if (this.reconnectTimer !== null) { window.clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+    this.closeSocket(false);
+    this.openSocket(this.connectGeneration);
+  }
+
+  public connectWithPatAccount(account: DerivPatAccount, appId?: string) {
+    this.appId = appId?.trim() || this.appId;
+    this.token = null;
+    this.isPatOtpConnection = true;
+    this.patAccountId = account.account_id;
+    this.patAccountIsVirtual = Boolean(account.is_virtual);
+    this.cachedLoginId = account.loginid || account.account_id;
+    this.currency = account.currency || 'USD';
+    this.cachedBalance = Number(account.balance) || 0;
     this.intentionallyClosed = false;
     this.isAuthorized = false;
     this.isConnected = false;
@@ -204,6 +230,9 @@ class DerivWebSocketService {
   public disconnect() {
     this.intentionallyClosed = true;
     this.token = null;
+    this.isPatOtpConnection = false;
+    this.patAccountId = null;
+    clearDerivPatCredentials();
     this.isAuthorized = false;
     this.isConnected = false;
     this.connectGeneration += 1;
@@ -224,6 +253,12 @@ class DerivWebSocketService {
   }
 
   private async getAuthenticatedWebSocketUrl(generation: number): Promise<{ url: string; accountId?: string }> {
+    if (this.isPatOtpConnection) {
+      if (!this.patAccountId) throw new Error('Select a Deriv account before connecting.');
+      const url = await fetchDerivPatOtpUrl(this.patAccountId);
+      if (generation !== this.connectGeneration || this.intentionallyClosed) throw new Error('Connection attempt was cancelled.');
+      return { url, accountId: this.patAccountId };
+    }
     if (!this.token) {
       // Public Deriv WebSocket for tick streaming in demo/free mode
       return { url: `wss://ws.derivws.com/websockets/v3?app_id=${encodeURIComponent(this.appId || '1089')}` };
@@ -241,7 +276,7 @@ class DerivWebSocketService {
     if (generation !== this.connectGeneration || this.intentionallyClosed) return;
     this.getAuthenticatedWebSocketUrl(generation).then(({ url, accountId }) => {
       if (generation !== this.connectGeneration || this.intentionallyClosed) return;
-      this.activeEndpointUrl = url;
+      this.activeEndpointUrl = this.isPatOtpConnection ? 'Deriv authenticated OTP WebSocket' : url;
       if (accountId) this.cachedLoginId = accountId;
       const ws = new WebSocket(url);
       this.ws = ws;
@@ -250,7 +285,15 @@ class DerivWebSocketService {
         this.isConnected = true;
         this.reconnectAttempts = 0;
 
-        if (this.token) {
+        if (this.isPatOtpConnection) {
+          // OTP WebSocket URLs are already authenticated. Never send a second authorize request.
+          try {
+            ws.send(JSON.stringify({ balance: 1 }));
+            ws.send(JSON.stringify({ get_settings: 1 }));
+          } catch (err) {
+            console.error('[Deriv WS] Could not request PAT account details:', err);
+          }
+        } else if (this.token) {
           try {
             console.info('[Deriv WS] Sending authorize handshake for token...');
             ws.send(JSON.stringify({ authorize: this.token }));
@@ -287,7 +330,7 @@ class DerivWebSocketService {
       ws.onmessage = (event) => { if (generation !== this.connectGeneration || ws !== this.ws) return; try { this.handleMessage(JSON.parse(event.data)); } catch (error) { console.error('[Deriv WS] Invalid JSON message:', error); } };
       ws.onerror = () => { if (generation !== this.connectGeneration || ws !== this.ws) return; this.isConnected = false; this.isAuthorized = false; this.notifyAuth({ isAuthorized: false, appId: this.appId, activeEndpoint: this.activeEndpointUrl, error: 'Deriv WebSocket connection error.' }); };
       ws.onclose = (event) => { if (generation !== this.connectGeneration || ws !== this.ws) return; this.ws = null; this.isConnected = false; this.isAuthorized = false; const error = `Deriv WebSocket connection closed. Code: ${event.code} Reason: ${event.reason || 'none'}`; console.warn('[Deriv WS]', error); if (!this.intentionallyClosed) { this.notifyAuth({ isAuthorized: false, appId: this.appId, activeEndpoint: this.activeEndpointUrl, error }); this.scheduleReconnect(generation); } };
-    }).catch((error) => { if (generation !== this.connectGeneration || this.intentionallyClosed) return; this.isConnected = false; this.isAuthorized = false; const message = error instanceof Error ? error.message : String(error); console.error('[Deriv WS] Failed to open WebSocket:', message); this.notifyAuth({ isAuthorized: false, appId: this.appId, activeEndpoint: this.activeEndpointUrl, error: message }); this.scheduleReconnect(generation); });
+    }).catch((error) => { if (generation !== this.connectGeneration || this.intentionallyClosed) return; this.isConnected = false; this.isAuthorized = false; const message = error instanceof Error ? error.message : String(error); console.error('[Deriv WS] Failed to open WebSocket:', message); this.notifyAuth({ isAuthorized: false, appId: this.appId, activeEndpoint: this.activeEndpointUrl, error: message }); if (!this.isPatOtpConnection) this.scheduleReconnect(generation); });
   }
 
   private scheduleReconnect(generation: number) { if (this.reconnectTimer !== null || generation !== this.connectGeneration) return; const delay = Math.min(30000, 1000 * Math.pow(2, this.reconnectAttempts)); this.reconnectAttempts += 1; this.reconnectTimer = window.setTimeout(() => { this.reconnectTimer = null; this.openSocket(generation); }, delay); }
@@ -408,7 +451,28 @@ class DerivWebSocketService {
       }
     }
   }
-  private handleBalance(balance: any) { if (!balance) return; const value = Number(balance.balance); if (!Number.isFinite(value)) return; this.currency = balance.currency || this.currency; this.cachedLoginId = balance.loginid || balance.account || this.cachedLoginId; this.cachedBalance = value; this.notifyAuth({ isAuthorized: this.isAuthorized, loginid: this.cachedLoginId, email: this.cachedEmail, balance: value, currency: this.currency, isVirtual: this.cachedIsVirtual, appId: this.appId, activeEndpoint: this.activeEndpointUrl, error: this.isAuthorized ? null : 'Account is not authorized.' }); }
+  private handleBalance(balance: any) {
+    if (!balance) return;
+    const value = Number(balance.balance);
+    if (!Number.isFinite(value)) return;
+    this.currency = balance.currency || this.currency;
+    this.cachedLoginId = balance.loginid || balance.account || this.cachedLoginId;
+    this.cachedBalance = value;
+    if (this.isPatOtpConnection && this.cachedLoginId) {
+      const wasAuthorized = this.isAuthorized;
+      this.isAuthorized = true;
+      this.cachedIsVirtual = this.patAccountIsVirtual;
+      this.notifyAuth({ isAuthorized: true, loginid: this.cachedLoginId, email: this.cachedEmail, balance: value, currency: this.currency, isVirtual: this.cachedIsVirtual, appId: this.appId, activeEndpoint: this.activeEndpointUrl, error: null });
+      if (!wasAuthorized && this.ws?.readyState === WebSocket.OPEN) {
+        try {
+          this.ws.send(JSON.stringify({ balance: 1, subscribe: 1 }));
+          this.ws.send(JSON.stringify({ get_settings: 1 }));
+        } catch (error) { console.warn('[Deriv WS] Could not subscribe to PAT account updates:', error); }
+      }
+      return;
+    }
+    this.notifyAuth({ isAuthorized: this.isAuthorized, loginid: this.cachedLoginId, email: this.cachedEmail, balance: value, currency: this.currency, isVirtual: this.cachedIsVirtual, appId: this.appId, activeEndpoint: this.activeEndpointUrl, error: this.isAuthorized ? null : 'Account is not authorized.' });
+  }
   private handleSettings(settings: any) { if (!settings) return; if (settings.email) this.cachedEmail = settings.email; if (this.isAuthorized) this.notifyAuth({ isAuthorized: true, loginid: this.cachedLoginId, email: this.cachedEmail, currency: this.currency, isVirtual: this.cachedIsVirtual, appId: this.appId, activeEndpoint: this.activeEndpointUrl, error: null }); }
 
   private cancelPendingTrade(clientId: string, reason: string) {
@@ -456,8 +520,8 @@ class DerivWebSocketService {
     if (clientId && this.pendingTrades.has(clientId)) this.cancelPendingTrade(String(clientId), `${code}: ${message}`);
     const contractId = data.echo_req?.contract_id;
     if (contractId) this.clearSettlementPolling(String(contractId));
-    if (this.isAuthorized) {
-      this.notifyAuth({ isAuthorized: this.isAuthorized, loginid: this.cachedLoginId, email: this.cachedEmail, currency: this.currency, appId: this.appId, activeEndpoint: this.activeEndpointUrl, error: `${code}: ${message}` });
+    if (this.isAuthorized || this.isPatOtpConnection) {
+      this.notifyAuth({ isAuthorized: this.isAuthorized, loginid: this.cachedLoginId, email: this.cachedEmail, currency: this.currency, isVirtual: this.cachedIsVirtual, appId: this.appId, activeEndpoint: this.activeEndpointUrl, error: `${code}: ${message}` });
     }
   }
 
