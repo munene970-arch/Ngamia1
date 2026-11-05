@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { DerivPatAccount, fetchDerivPatAccounts, setDerivPatCredentials } from '../services/derivPatConnection';
+import { DerivPatAccount, clearDerivPatCredentials, fetchDerivPatAccounts, hasDerivPatCredentials, setDerivPatCredentials } from '../services/derivPatConnection';
 
 interface Props {
   onConnectAccount: (account: DerivPatAccount, appId: string) => void;
@@ -29,6 +29,7 @@ export const DerivPatConnector: React.FC<Props> = ({ onConnectAccount, isConnect
       setSelectedId(preferred.account_id);
       setStatus(`Loaded ${rows.length} account(s). Select an account to connect.`);
     } catch (e) {
+      clearDerivPatCredentials();
       setAccounts([]);
       setSelectedId('');
       setStatus('');
@@ -45,7 +46,11 @@ export const DerivPatConnector: React.FC<Props> = ({ onConnectAccount, isConnect
       return;
     }
     setError('');
-    setDerivPatCredentials(appId, pat);
+    if (pat.trim()) setDerivPatCredentials(appId, pat);
+    if (!hasDerivPatCredentials()) {
+      setError('Re-enter your PAT and load accounts before connecting.');
+      return;
+    }
     onConnectAccount(account, appId.trim());
     setPat('');
     setStatus(`Connecting to ${account.loginid || account.account_id}…`);
@@ -88,7 +93,7 @@ export const DerivPatConnector: React.FC<Props> = ({ onConnectAccount, isConnect
               {isConnecting ? 'Connecting…' : 'Connect selected account'}
             </button>
           </>}
-          {isConnected && <button type="button" onClick={onDisconnect} className="mt-3 w-full rounded-lg border border-rose-500/50 bg-rose-950/50 px-3 py-2 text-xs font-bold text-rose-200">Disconnect and clear PAT</button>}
+          {(isConnected || accounts.length > 0) && <button type="button" onClick={onDisconnect} className="mt-3 w-full rounded-lg border border-rose-500/50 bg-rose-950/50 px-3 py-2 text-xs font-bold text-rose-200">Disconnect and clear PAT</button>}
           {status && <p role="status" className="mt-3 text-xs text-emerald-300">{status}</p>}
           {error && <p role="alert" className="mt-3 text-xs text-rose-300">{error}</p>}
           <p className="mt-3 text-[11px] leading-relaxed text-slate-400">The PAT is not saved in localStorage, sessionStorage, cookies, or URLs. After a page refresh, enter it again. Test on DEMO before using a REAL account.</p>
