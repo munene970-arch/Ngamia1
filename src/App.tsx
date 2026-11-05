@@ -23,6 +23,8 @@ import { LayoutSelectorModal } from './components/Layouts/LayoutSelectorModal';
 import { StrategyShieldModal } from './components/common/StrategyShieldModal';
 import { DerivOAuthAccount, parseDerivOAuthInput, getStoredAccounts, saveStoredAccounts } from './utils/derivOAuth';
 import { REGISTERED_DERIV_APP_ID, STING_REDIRECT_URI, DERIV_OAUTH_SCOPE } from './config/deriv';
+import { DerivPatConnector } from './components/DerivPatConnector';
+import { DerivPatAccount } from './services/derivPatConnection';
 
 export default function App() {
   const [activeTab, setActiveTabState] = useState<string>('terminal');
@@ -66,7 +68,7 @@ export default function App() {
   const [selectedSymbol, setSelectedSymbol] = useState<MarketSymbol>('R_75');
   const [activeContracts, setActiveContracts] = useState<ActiveContract[]>([]);
   const [autoConfiguredBot, setAutoConfiguredBot] = useState<DBotStrategy | null>(null);
-  const [availableAccounts, setAvailableAccounts] = useState<DerivOAuthAccount[]>(getStoredAccounts());
+  const [availableAccounts, setAvailableAccounts] = useState<DerivOAuthAccount[]>([]);
   const [isTestMode, setIsTestMode] = useState<boolean>(() => {
     const saved = localStorage.getItem('deriv_strategy_test_mode');
     return saved !== null ? saved === 'true' : false;
@@ -113,16 +115,15 @@ export default function App() {
       setConnectionState((p) => ({ ...p, isConnecting: false, isAuthorized: false, authError: 'Enter a valid Deriv API token.' }));
       return;
     }
-    sessionStorage.setItem('deriv_token', cleanToken);
-    localStorage.setItem('deriv_token', cleanToken);
-    localStorage.setItem('deriv_app_id', cleanAppId);
-    setConnectionState((p) => ({ ...p, appId: cleanAppId, token: cleanToken, isConnecting: true, isAuthorized: false, authError: null }));
+    sessionStorage.removeItem('deriv_token');
+    localStorage.removeItem('deriv_token');
+    localStorage.removeItem('deriv_app_id');
+    setConnectionState((p) => ({ ...p, appId: cleanAppId, token: undefined, isConnecting: true, isAuthorized: false, authError: null }));
     derivWS.connect(cleanAppId, cleanToken);
   };
 
   const connectWithParsedAccounts = (accounts: DerivOAuthAccount[]) => {
     if (!accounts?.length) return;
-    saveStoredAccounts(accounts);
     setAvailableAccounts(accounts);
     const a = accounts.find((x) => x.type === 'REAL') || accounts[0];
     if (a?.token) connectWithToken(REGISTERED_DERIV_APP_ID, a.token);
@@ -219,12 +220,15 @@ export default function App() {
       const params = new URLSearchParams(search);
       const returnedState = params.get('state');
       const savedState = sessionStorage.getItem('deriv_oauth_state');
+      sessionStorage.removeItem('deriv_token');
+      localStorage.removeItem('deriv_token');
+      localStorage.removeItem('deriv_app_id');
+      localStorage.removeItem('deriv_accounts');
       if (returnedState && savedState && returnedState !== savedState) console.warn('[Deriv OAuth] State mismatch');
       if (returnedState) sessionStorage.removeItem('deriv_oauth_state');
       const parsed = parseDerivOAuthInput(full);
-      let token = sessionStorage.getItem('deriv_token') || localStorage.getItem('deriv_token') || '';
+      let token = '';
       if (parsed.length) {
-        saveStoredAccounts(parsed);
         setAvailableAccounts(parsed);
         token = (parsed.find((a) => a.type === 'REAL') || parsed[0])?.token || token;
       }
@@ -256,6 +260,23 @@ export default function App() {
 
   const handleSelectAccount = (a: DerivOAuthAccount) => {
     if (a?.token) connectWithToken(connectionState.appId || REGISTERED_DERIV_APP_ID, a.token);
+  };
+
+  const handleConnectPatAccount = (account: DerivPatAccount, appId: string) => {
+    setConnectionState((previous) => ({
+      ...previous,
+      appId,
+      token: undefined,
+      isConnecting: true,
+      isAuthorized: false,
+      isConnected: false,
+      accountType: account.is_virtual ? 'DEMO' : 'REAL',
+      loginid: account.loginid || account.account_id,
+      balanceUsd: Number(account.balance) || 0,
+      currency: account.currency || 'USD',
+      authError: null,
+    }));
+    derivWS.connectWithPatAccount(account);
   };
 
   const handleOAuthRedirect = () => {
@@ -306,6 +327,7 @@ export default function App() {
         onToggleTestMode={handleToggleTestMode}
         onOpenShieldModal={() => setIsShieldModalOpen(true)}
       />
+      <DerivPatConnector onConnectAccount={handleConnectPatAccount} isConnecting={connectionState.isConnecting} />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
         {/* Render Primary Terminal Workspace according to selected layout */}
