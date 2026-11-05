@@ -60,7 +60,7 @@ function readDerivPatBody(req: express.Request) {
   const body = req.body || {};
   const appId = String(body.app_id || '').trim();
   const pat = String(body.pat || '').trim();
-  if (!/^\\d{1,12}$/.test(appId)) throw Object.assign(new Error('Enter a valid numeric Deriv App ID.'), { status: 400 });
+  if (!/^\d{1,12}$/.test(appId)) throw Object.assign(new Error('Enter a valid numeric Deriv App ID.'), { status: 400 });
   if (pat.length < 10 || pat.length > 4096) throw Object.assign(new Error('Enter a valid Deriv PAT.'), { status: 400 });
   return { appId, pat };
 }
