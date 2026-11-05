@@ -261,6 +261,14 @@ export default function App() {
     if (a?.token) connectWithToken(connectionState.appId || REGISTERED_DERIV_APP_ID, a.token);
   };
 
+  const handleDisconnectPatAccount = () => {
+    derivWS.disconnect();
+    setAvailableAccounts([]);
+    setLiveBalanceUsd(0);
+    setDerivNickname('');
+    setConnectionState((previous) => ({ ...previous, token: undefined, isConnected: false, isAuthorized: false, isConnecting: false, accountType: 'DEMO', authError: null, loginid: undefined }));
+  };
+
   const handleConnectPatAccount = (account: DerivPatAccount, appId: string) => {
     setConnectionState((previous) => ({
       ...previous,
@@ -326,7 +334,7 @@ export default function App() {
         onToggleTestMode={handleToggleTestMode}
         onOpenShieldModal={() => setIsShieldModalOpen(true)}
       />
-      <DerivPatConnector onConnectAccount={handleConnectPatAccount} isConnecting={connectionState.isConnecting} />
+      <DerivPatConnector onConnectAccount={handleConnectPatAccount} onDisconnect={handleDisconnectPatAccount} isConnecting={connectionState.isConnecting} isConnected={connectionState.isAuthorized} />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
         {/* Render Primary Terminal Workspace according to selected layout */}
