@@ -21,7 +21,7 @@ import { MultiMarketGridLayout } from './components/Layouts/MultiMarketGridLayou
 import { BotOperatorLayout } from './components/Layouts/BotOperatorLayout';
 import { LayoutSelectorModal } from './components/Layouts/LayoutSelectorModal';
 import { StrategyShieldModal } from './components/common/StrategyShieldModal';
-import { DerivOAuthAccount, parseDerivOAuthInput, getStoredAccounts, saveStoredAccounts } from './utils/derivOAuth';
+import { DerivOAuthAccount, parseDerivOAuthInput } from './utils/derivOAuth';
 import { REGISTERED_DERIV_APP_ID, STING_REDIRECT_URI, DERIV_OAUTH_SCOPE } from './config/deriv';
 import { DerivPatConnector } from './components/DerivPatConnector';
 import { DerivPatAccount } from './services/derivPatConnection';
@@ -206,7 +206,6 @@ export default function App() {
       if (e.data?.type !== 'DERIV_OAUTH_SUCCESS') return;
       const { accounts, token, appId } = e.data;
       if (Array.isArray(accounts) && accounts.length) {
-        saveStoredAccounts(accounts);
         setAvailableAccounts(accounts);
       }
       if (token) connectWithToken(appId || REGISTERED_DERIV_APP_ID, token);
@@ -276,7 +275,7 @@ export default function App() {
       currency: account.currency || 'USD',
       authError: null,
     }));
-    derivWS.connectWithPatAccount(account);
+    derivWS.connectWithPatAccount(account, appId);
   };
 
   const handleOAuthRedirect = () => {
