@@ -194,6 +194,7 @@ class DerivWebSocketService {
 
   public connect(appId: string = REGISTERED_DERIV_APP_ID, rawToken?: string) {
     this.appId = appId?.trim() || REGISTERED_DERIV_APP_ID;
+    clearDerivPatCredentials();
     this.isPatOtpConnection = false;
     this.patAccountId = null;
     this.token = this.sanitizeToken(rawToken);
@@ -275,7 +276,7 @@ class DerivWebSocketService {
     if (generation !== this.connectGeneration || this.intentionallyClosed) return;
     this.getAuthenticatedWebSocketUrl(generation).then(({ url, accountId }) => {
       if (generation !== this.connectGeneration || this.intentionallyClosed) return;
-      this.activeEndpointUrl = url;
+      this.activeEndpointUrl = this.isPatOtpConnection ? 'Deriv authenticated OTP WebSocket' : url;
       if (accountId) this.cachedLoginId = accountId;
       const ws = new WebSocket(url);
       this.ws = ws;
