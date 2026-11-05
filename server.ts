@@ -86,8 +86,8 @@ function derivPatGuard(req: express.Request, res: express.Response): boolean {
   if (derivPatRateLimited(req)) { res.status(429).json({ success: false, error: 'Too many requests. Try again shortly.' }); return false; }
   return true;
 }
-async function handleDerivPatAccounts(req: express.Request, res: express.Response) {
-  if (req.method !== 'POST') return res.status(405).json({ success: false, error: 'Method not allowed.' });
+async function handleDerivPatAccounts(req: express.Request, res: express.Response): Promise<void> {
+  if (req.method !== 'POST') { res.status(405).json({ success: false, error: 'Method not allowed.' }); return; }
   if (!derivPatGuard(req, res)) return;
   try {
     const creds = readDerivPatBody(req);
@@ -101,19 +101,19 @@ async function handleDerivPatAccounts(req: express.Request, res: express.Respons
       is_virtual: Boolean(item.is_virtual ?? item.isVirtual ?? String(item.account_id || '').startsWith('V')),
       account_type: String(item.account_type || item.type || ''),
     })).filter((item: any) => item.account_id);
-    return res.set('Cache-Control', 'no-store').json({ success: true, accounts });
+    res.set('Cache-Control', 'no-store').json({ success: true, accounts });
   } catch (error: any) {
     return res.status(Number.isInteger(error.status) ? error.status : 502)
       .set('Cache-Control', 'no-store').json({ success: false, error: error.message || 'Unable to retrieve Deriv accounts.' });
   }
 }
-async function handleDerivPatOtp(req: express.Request, res: express.Response) {
-  if (req.method !== 'POST') return res.status(405).json({ success: false, error: 'Method not allowed.' });
+async function handleDerivPatOtp(req: express.Request, res: express.Response): Promise<void> {
+  if (req.method !== 'POST') { res.status(405).json({ success: false, error: 'Method not allowed.' }); return; }
   if (!derivPatGuard(req, res)) return;
   try {
     const creds = readDerivPatBody(req);
     const accountId = String(req.body?.account_id || '').trim();
-    if (!accountId || accountId.length > 128) return res.status(400).json({ success: false, error: 'A valid Deriv account ID is required.' });
+    if (!accountId || accountId.length > 128) { res.status(400).json({ success: false, error: 'A valid Deriv account ID is required.' }); return; }
     const list = await derivPatFetch(`${DERIV_TRADING_API}/options/accounts`, creds);
     const rows = Array.isArray(list?.data) ? list.data : Array.isArray(list?.data?.accounts) ? list.data.accounts : [];
     if (!rows.some((item: any) => String(item.account_id || item.id || '') === accountId)) {
@@ -126,7 +126,7 @@ async function handleDerivPatOtp(req: express.Request, res: express.Response) {
     if (parsed.protocol !== 'wss:' || !(parsed.hostname === 'derivws.com' || parsed.hostname.endsWith('.derivws.com'))) {
       throw Object.assign(new Error('Deriv returned an unexpected WebSocket host.'), { status: 502 });
     }
-    return res.set('Cache-Control', 'no-store').json({ success: true, url, account_id: accountId });
+    res.set('Cache-Control', 'no-store').json({ success: true, url, account_id: accountId });
   } catch (error: any) {
     return res.status(Number.isInteger(error.status) ? error.status : 502)
       .set('Cache-Control', 'no-store').json({ success: false, error: error.message || 'Unable to authenticate the Deriv account.' });
