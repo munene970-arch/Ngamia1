@@ -51,6 +51,7 @@ export const DerivPatConnector: React.FC<Props> = ({ onConnectAccount, isConnect
       setError('Re-enter your PAT and load accounts before connecting.');
       return;
     }
+    if (isConnected && !window.confirm('Switching accounts replaces Ngamia1’s shared trading connection. Stop all active strategies and wait for open trades to settle before continuing. Continue?')) return;
     onConnectAccount(account, appId.trim());
     setPat('');
     setStatus(`Connecting to ${account.loginid || account.account_id}…`);
