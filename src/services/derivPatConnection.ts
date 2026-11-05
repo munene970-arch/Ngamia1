@@ -43,7 +43,7 @@ async function post<T>(path: string, payload: Record<string, string>): Promise<T
 export async function fetchDerivPatAccounts(appId: string, pat: string): Promise<DerivPatAccount[]> {
   const cleanAppId = appId.trim();
   const cleanPat = pat.trim();
-  if (!/^\\d{1,12}$/.test(cleanAppId)) throw new Error('Enter your numeric Deriv App ID.');
+  if (!/^\d{1,12}$/.test(cleanAppId)) throw new Error('Enter your numeric Deriv App ID.');
   if (cleanPat.length < 10 || cleanPat.length > 4096) throw new Error('Enter a valid Deriv Personal Access Token.');
   const data = await post<{ success: boolean; accounts: DerivPatAccount[] }>('/api/deriv-pat-accounts', {
     app_id: cleanAppId, pat: cleanPat,
