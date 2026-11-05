@@ -4,9 +4,11 @@ import { DerivPatAccount, fetchDerivPatAccounts, setDerivPatCredentials } from '
 interface Props {
   onConnectAccount: (account: DerivPatAccount, appId: string) => void;
   isConnecting?: boolean;
+  isConnected?: boolean;
+  onDisconnect: () => void;
 }
 
-export const DerivPatConnector: React.FC<Props> = ({ onConnectAccount, isConnecting = false }) => {
+export const DerivPatConnector: React.FC<Props> = ({ onConnectAccount, isConnecting = false, isConnected = false, onDisconnect }) => {
   const [open, setOpen] = useState(false);
   const [appId, setAppId] = useState('');
   const [pat, setPat] = useState('');
@@ -86,6 +88,7 @@ export const DerivPatConnector: React.FC<Props> = ({ onConnectAccount, isConnect
               {isConnecting ? 'Connecting…' : 'Connect selected account'}
             </button>
           </>}
+          {isConnected && <button type="button" onClick={onDisconnect} className="mt-3 w-full rounded-lg border border-rose-500/50 bg-rose-950/50 px-3 py-2 text-xs font-bold text-rose-200">Disconnect and clear PAT</button>}
           {status && <p role="status" className="mt-3 text-xs text-emerald-300">{status}</p>}
           {error && <p role="alert" className="mt-3 text-xs text-rose-300">{error}</p>}
           <p className="mt-3 text-[11px] leading-relaxed text-slate-400">The PAT is not saved in localStorage, sessionStorage, cookies, or URLs. After a page refresh, enter it again. Test on DEMO before using a REAL account.</p>
