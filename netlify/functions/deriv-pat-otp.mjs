@@ -25,7 +25,7 @@ function rateLimited(event) {
 function credentials(body) {
   const appId = String(body?.app_id || "").trim();
   const pat = String(body?.pat || "").trim();
-  if (!/^\\d{1,12}$/.test(appId)) throw Object.assign(new Error("Enter a valid numeric Deriv App ID."), { statusCode: 400 });
+  if (!/^\d{1,12}$/.test(appId)) throw Object.assign(new Error("Enter a valid numeric Deriv App ID."), { statusCode: 400 });
   if (pat.length < 10 || pat.length > 4096) throw Object.assign(new Error("Enter a valid Deriv PAT."), { statusCode: 400 });
   return { appId, pat };
 }
