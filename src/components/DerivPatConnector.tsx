@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { DerivPatAccount, fetchDerivPatAccounts, setDerivPatCredentials } from '../services/derivPatConnection';
 
 interface Props {
-  onConnectAccount: (account: DerivPatAccount) => void;
+  onConnectAccount: (account: DerivPatAccount, appId: string) => void;
   isConnecting?: boolean;
 }
 
@@ -44,7 +44,7 @@ export const DerivPatConnector: React.FC<Props> = ({ onConnectAccount, isConnect
     }
     setError('');
     setDerivPatCredentials(appId, pat);
-    onConnectAccount(account);
+    onConnectAccount(account, appId.trim());
     setPat('');
     setStatus(`Connecting to ${account.loginid || account.account_id}…`);
   };
