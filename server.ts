@@ -58,6 +58,7 @@ function readDerivPatBody(req: express.Request) {
   const length = Number(req.headers['content-length'] || 0);
   if (length > 12_000) throw Object.assign(new Error('Request is too large.'), { status: 413 });
   const body = req.body || {};
+  if (JSON.stringify(body).length > 12_000) throw Object.assign(new Error('Request is too large.'), { status: 413 });
   const appId = String(body.app_id || '').trim();
   const pat = String(body.pat || '').trim();
   if (!/^\d{1,12}$/.test(appId)) throw Object.assign(new Error('Enter a valid numeric Deriv App ID.'), { status: 400 });
