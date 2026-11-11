@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { ShieldCheck, Lock, Eye, EyeOff, ExternalLink, Key, CheckCircle2, AlertTriangle, X, Trash2, Server } from 'lucide-react';
+import { ShieldCheck, Lock, Eye, EyeOff, ExternalLink, Key, CheckCircle2, AlertTriangle, X, Trash2, Server, Copy, Check, Globe, RefreshCw } from 'lucide-react';
 import { parseDerivOAuthInput } from '../utils/derivOAuth';
-import { REGISTERED_DERIV_APP_ID } from '../config/deriv';
+import { REGISTERED_DERIV_APP_ID, STING_REDIRECT_URI, getDerivRedirectUri, DERIV_WEBSOCKET_ENDPOINTS, DerivEndpointConfig } from '../config/deriv';
+import { derivWS } from '../services/derivWebSocket';
 
 interface TokenSecurityModalProps {
   isOpen: boolean;
@@ -28,6 +29,13 @@ export const TokenSecurityModal: React.FC<TokenSecurityModalProps> = ({
   const [showToken, setShowToken] = useState(false);
   const [rememberToken, setRememberToken] = useState(false);
   const [pasteError, setPasteError] = useState<string | null>(null);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  const handleCopy = (text: string, key: string) => {
+    navigator.clipboard?.writeText(text);
+    setCopiedKey(key);
+    setTimeout(() => setCopiedKey(null), 2000);
+  };
 
   if (!isOpen) return null;
 
@@ -84,7 +92,7 @@ export const TokenSecurityModal: React.FC<TokenSecurityModalProps> = ({
           </button>
         </div>
 
-        {/* Secure HTTPS & WSS Banner */}
+        {/* Secure HTTPS & WSS Banner with Multi-Endpoint Switcher */}
         <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 space-y-3">
           <div className="flex items-center justify-between text-xs font-bold text-slate-200">
             <div className="flex items-center space-x-2">
@@ -96,26 +104,135 @@ export const TokenSecurityModal: React.FC<TokenSecurityModalProps> = ({
             </span>
           </div>
 
-          <div className="text-[11px] text-slate-400 space-y-1 bg-slate-900/80 p-3 rounded-xl border border-slate-800 font-mono">
+          <div className="text-[11px] text-slate-400 space-y-2 bg-slate-900/80 p-3 rounded-xl border border-slate-800 font-mono">
             <div className="flex items-center justify-between">
               <span className="text-slate-500">Protocol:</span>
               <span className="text-emerald-400 font-bold">WSS (WebSocket Secure)</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-slate-500">Active Server:</span>
+              <span className="text-white font-bold">{derivWS.getCurrentEndpoint().name}</span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-slate-500">Active Endpoint:</span>
               <span className="text-slate-200 truncate max-w-[260px]">{activeEndpoint}</span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-slate-500">Deriv API Docs:</span>
-              <a
-                href="https://developers.deriv.com/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-red-400 hover:text-red-300 underline font-sans font-bold flex items-center space-x-1"
-              >
-                <span>developers.deriv.com</span>
-                <ExternalLink className="w-3 h-3" />
-              </a>
+              <span className="text-slate-500">Registered App ID:</span>
+              <span className="text-emerald-300 font-bold">{REGISTERED_DERIV_APP_ID}</span>
+            </div>
+          </div>
+
+          {/* Deriv Server Endpoint Selector (Fix for Error 1006) */}
+          <div className="space-y-2 pt-1">
+            <div className="flex items-center justify-between text-[11px] font-bold text-slate-300">
+              <span className="flex items-center gap-1.5">
+                <Server className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Deriv Gateway Server Selector</span>
+              </span>
+              <span className="text-[10px] text-amber-400 font-medium">Bypass ISP & 1006 Blocks</span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+              {DERIV_WEBSOCKET_ENDPOINTS.map((ep) => {
+                const isActive = derivWS.getCurrentEndpoint().id === ep.id;
+                return (
+                  <button
+                    key={ep.id}
+                    type="button"
+                    onClick={() => {
+                      derivWS.setEndpoint(ep.id);
+                    }}
+                    className={`p-2.5 rounded-xl border text-left transition-all ${
+                      isActive
+                        ? 'bg-emerald-950/60 border-emerald-500/80 text-emerald-200 shadow-md shadow-emerald-950/30'
+                        : 'bg-slate-900/80 hover:bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold flex items-center gap-1.5">
+                        <span className={`w-2 h-2 rounded-full ${isActive ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'}`} />
+                        {ep.name.split(' ')[1] || ep.name}
+                      </span>
+                      {isActive && <span className="text-[9px] font-black uppercase text-emerald-400 bg-emerald-950 px-1.5 py-0.5 rounded border border-emerald-500/40">ACTIVE</span>}
+                    </div>
+                    <div className="text-[10px] text-slate-400 mt-1 truncate font-mono">{ep.host}</div>
+                    <div className="text-[10px] text-slate-500 mt-0.5 leading-tight">{ep.description}</div>
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-[10px] text-slate-400 leading-normal bg-slate-900/50 p-2 rounded-lg border border-slate-800/60">
+              💡 <strong className="text-slate-300">Error 1006 Solution:</strong> If your local internet service provider (ISP) or network firewall blocks <code className="text-emerald-400">ws.derivws.com</code>, switch to <strong className="text-white">Deriv Mirror (<code className="text-emerald-400">ws.binaryws.com</code>)</strong>. It operates on identical trading protocols and bypasses regional Cloudflare drops.
+            </p>
+          </div>
+        </div>
+
+        {/* Deriv App Registration & Redirect URIs */}
+        <div className="bg-slate-950/90 border border-slate-800 rounded-2xl p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-bold text-white flex items-center space-x-2">
+              <Globe className="w-4 h-4 text-emerald-400" />
+              <span>Deriv App Registration & Redirect URIs</span>
+            </h3>
+            <a
+              href="https://api.deriv.com/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[11px] font-bold text-red-400 hover:text-red-300 underline flex items-center space-x-1"
+            >
+              <span>Register at api.deriv.com</span>
+              <ExternalLink className="w-3 h-3" />
+            </a>
+          </div>
+
+          <p className="text-[11px] text-slate-400 leading-relaxed">
+            When registering your application on the Deriv Developer Dashboard (<code className="text-slate-300">api.deriv.com</code>), use the redirect URL below:
+          </p>
+
+          <div className="space-y-2">
+            <div className="bg-slate-900 border border-slate-800 p-2.5 rounded-xl space-y-1">
+              <div className="flex items-center justify-between text-[10px] text-slate-400 font-bold uppercase">
+                <span>Current App Redirect URL (Active)</span>
+                {copiedKey === 'current' ? (
+                  <span className="text-emerald-400 flex items-center gap-1 font-bold">
+                    <Check className="w-3 h-3" /> Copied!
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => handleCopy(getDerivRedirectUri(), 'current')}
+                    className="text-slate-400 hover:text-white flex items-center gap-1"
+                  >
+                    <Copy className="w-3 h-3" /> Copy
+                  </button>
+                )}
+              </div>
+              <div className="font-mono text-[11px] text-emerald-300 break-all bg-slate-950 p-1.5 rounded border border-slate-800">
+                {getDerivRedirectUri()}
+              </div>
+            </div>
+
+            <div className="bg-slate-900 border border-slate-800 p-2.5 rounded-xl space-y-1">
+              <div className="flex items-center justify-between text-[10px] text-slate-400 font-bold uppercase">
+                <span>GitHub Pages / Production Fallback URL</span>
+                {copiedKey === 'github' ? (
+                  <span className="text-emerald-400 flex items-center gap-1 font-bold">
+                    <Check className="w-3 h-3" /> Copied!
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => handleCopy(STING_REDIRECT_URI, 'github')}
+                    className="text-slate-400 hover:text-white flex items-center gap-1"
+                  >
+                    <Copy className="w-3 h-3" /> Copy
+                  </button>
+                )}
+              </div>
+              <div className="font-mono text-[11px] text-slate-300 break-all bg-slate-950 p-1.5 rounded border border-slate-800">
+                {STING_REDIRECT_URI}
+              </div>
             </div>
           </div>
         </div>

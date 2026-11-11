@@ -21,22 +21,19 @@ export const SCANNER_ASCENDING_MARKETS: VolatilityScannerMarket[] = [
 
 export const SCANNER_1S_ASCENDING_MARKETS: VolatilityScannerMarket[] = [
   { symbol: '1HZ10V', name: 'Volatility 10 (1s) Index', shortName: 'Vol 10 (1s)', volatility: 10, isOneSecond: true, pipSize: 2 },
+  { symbol: '1HZ15V', name: 'Volatility 15 (1s) Index', shortName: 'Vol 15 (1s)', volatility: 15, isOneSecond: true, pipSize: 2 },
   { symbol: '1HZ25V', name: 'Volatility 25 (1s) Index', shortName: 'Vol 25 (1s)', volatility: 25, isOneSecond: true, pipSize: 2 },
+  { symbol: '1HZ30V', name: 'Volatility 30 (1s) Index', shortName: 'Vol 30 (1s)', volatility: 30, isOneSecond: true, pipSize: 2 },
   { symbol: '1HZ50V', name: 'Volatility 50 (1s) Index', shortName: 'Vol 50 (1s)', volatility: 50, isOneSecond: true, pipSize: 2 },
   { symbol: '1HZ75V', name: 'Volatility 75 (1s) Index', shortName: 'Vol 75 (1s)', volatility: 75, isOneSecond: true, pipSize: 2 },
+  { symbol: '1HZ90V', name: 'Volatility 90 (1s) Index', shortName: 'Vol 90 (1s)', volatility: 90, isOneSecond: true, pipSize: 2 },
   { symbol: '1HZ100V', name: 'Volatility 100 (1s) Index', shortName: 'Vol 100 (1s)', volatility: 100, isOneSecond: true, pipSize: 2 },
-];
-
-export const SCANNER_HIGH_VOL_1S_MARKETS: VolatilityScannerMarket[] = [
-  { symbol: '1HZ150V', name: 'Volatility 150 (1s) Index', shortName: 'Vol 150 (1s)', volatility: 150, isOneSecond: true, pipSize: 2 },
-  { symbol: '1HZ250V', name: 'Volatility 250 (1s) Index', shortName: 'Vol 250 (1s)', volatility: 250, isOneSecond: true, pipSize: 2 },
 ];
 
 export const ALL_SCANNER_MARKETS: VolatilityScannerMarket[] = [
   ...SCANNER_ASCENDING_MARKETS,
   ...SCANNER_1S_ASCENDING_MARKETS,
-  ...SCANNER_HIGH_VOL_1S_MARKETS,
-];
+].sort((a, b) => a.volatility - b.volatility || (a.isOneSecond ? 1 : -1));
 
 export type ScannerMarketScope =
   | 'COMBINED_ALL'
@@ -49,6 +46,12 @@ export type ScannerStakeMode =
   | 'COMPOUND_STEPS'
   | 'BALANCE_PERCENT'
   | 'MARTINGALE'
+  | 'DALEMBERT'
+  | 'REVERSE_DALEMBERT'
+  | 'FIBONACCI'
+  | 'PAROLI'
+  | 'OSCARS_GRIND'
+  | 'KELLY_CRITERION'
   | 'FLAT';
 
 export type StreakRepeatMode =
@@ -74,6 +77,12 @@ export interface ScannerBotConfig {
   compoundReinvestPct: number; // e.g. 100 = 100% of profit added to stake, 50 = 50%
   compoundMaxSteps: number; // 0 = unlimited, 3 = reset to base stake after 3 wins
   compoundBalancePct: number; // For BALANCE_PERCENT mode (e.g. 1.0%, 2.0%)
+  // Advanced Betting Strategies Options
+  dalembertStep: number; // Step increment/decrement for D'Alembert
+  paroliConsecutiveTarget: number; // Consecutive wins target before banking (e.g. 3)
+  paroliMultiplier: number; // Multiplier on win for Paroli (e.g. 2x)
+  kellyFraction: number; // Fraction of optimal Kelly criterion (e.g. 0.25 = 25% Kelly)
+  oscarsTargetUnit: number; // Cycle target units for Oscar's Grind (default 1 unit)
   maxStakeCap: number; // Safety maximum stake ceiling (0 = uncapped)
   durationTicks: number;
   marketScope: ScannerMarketScope;
@@ -209,6 +218,8 @@ type TradeListener = (trades: ScannerTradeRecord[]) => void;
 type AnalysisListener = (analysis: Record<string, MarketDigitAnalysis>) => void;
 type BalanceUpdater = (profit: number, newBalance: number) => void;
 
+const FIBONACCI_STEPS = [1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89];
+
 class DerivDigitScannerBotEngine {
   private config: ScannerBotConfig = {
     baseStake: 1.0,
@@ -221,6 +232,11 @@ class DerivDigitScannerBotEngine {
     compoundReinvestPct: 100, // 100% of profit compounded
     compoundMaxSteps: 0, // 0 = unlimited compounding
     compoundBalancePct: 2.0, // 2% of account balance
+    dalembertStep: 0.35,
+    paroliConsecutiveTarget: 3,
+    paroliMultiplier: 2.0,
+    kellyFraction: 0.25,
+    oscarsTargetUnit: 1,
     maxStakeCap: 0, // 0 = uncapped
     durationTicks: 1,
     marketScope: 'COMBINED_ALL',
@@ -252,6 +268,9 @@ class DerivDigitScannerBotEngine {
   private contractListenersRegistered = false;
   private marketListenersRegistered = false;
   private isEvaluating = false;
+  private fibonacciIndex: number = 0;
+  private oscarsCycleProfit: number = 0;
+  private dalembertStepCount: number = 0;
 
   private status: ScannerBotStatus = {
     isRunning: false,
@@ -359,21 +378,9 @@ class DerivDigitScannerBotEngine {
       case 'STANDARD_10_TO_100':
         return SCANNER_ASCENDING_MARKETS;
       case 'ALL_PLUS_HIGH_VOL':
-        return ALL_SCANNER_MARKETS;
       case 'COMBINED_ALL':
       default:
-        return [
-          SCANNER_ASCENDING_MARKETS[0],
-          SCANNER_1S_ASCENDING_MARKETS[0],
-          SCANNER_ASCENDING_MARKETS[1],
-          SCANNER_1S_ASCENDING_MARKETS[1],
-          SCANNER_ASCENDING_MARKETS[2],
-          SCANNER_1S_ASCENDING_MARKETS[2],
-          SCANNER_ASCENDING_MARKETS[3],
-          SCANNER_1S_ASCENDING_MARKETS[3],
-          SCANNER_ASCENDING_MARKETS[4],
-          SCANNER_1S_ASCENDING_MARKETS[4],
-        ];
+        return ALL_SCANNER_MARKETS;
     }
   }
 
@@ -769,10 +776,17 @@ class DerivDigitScannerBotEngine {
     this.status.stopReason = null;
     this.status.currentMartingaleStep = 0;
     this.status.compoundStep = 0;
+    this.fibonacciIndex = 0;
+    this.oscarsCycleProfit = 0;
+    this.dalembertStepCount = 0;
     this.lastTradedPatternKeys.clear();
 
     if (this.config.stakeMode === 'BALANCE_PERCENT' && this.accountBalance > 0) {
       let initStake = this.accountBalance * (this.config.compoundBalancePct / 100);
+      if (this.config.maxStakeCap > 0 && initStake > this.config.maxStakeCap) initStake = this.config.maxStakeCap;
+      this.status.currentStake = Math.max(0.35, Number(initStake.toFixed(2)));
+    } else if (this.config.stakeMode === 'KELLY_CRITERION' && this.accountBalance > 0) {
+      let initStake = this.accountBalance * (this.config.kellyFraction || 0.25) * 0.08;
       if (this.config.maxStakeCap > 0 && initStake > this.config.maxStakeCap) initStake = this.config.maxStakeCap;
       this.status.currentStake = Math.max(0.35, Number(initStake.toFixed(2)));
     } else {
@@ -823,6 +837,9 @@ class DerivDigitScannerBotEngine {
     this.status.maxConsecutiveWins = 0;
     this.status.currentMartingaleStep = 0;
     this.status.compoundStep = 0;
+    this.fibonacciIndex = 0;
+    this.oscarsCycleProfit = 0;
+    this.dalembertStepCount = 0;
     this.status.currentCycle = 1;
     this.status.currentMarketIndex = 0;
     this.status.activeContractId = null;
@@ -1110,7 +1127,7 @@ class DerivDigitScannerBotEngine {
           this.status.maxConsecutiveWins = this.status.consecutiveWins;
         }
 
-        // Compounding money management
+        // Compounding & Advanced Betting Strategies
         if (this.config.stakeMode === 'COMPOUND') {
           this.status.compoundStep++;
           const reinvest = profit * (this.config.compoundReinvestPct / 100);
@@ -1150,6 +1167,67 @@ class DerivDigitScannerBotEngine {
             nextStake = newBal;
           }
           this.status.currentStake = Math.max(0.35, Number(nextStake.toFixed(2)));
+        } else if (this.config.stakeMode === 'DALEMBERT') {
+          // D'Alembert on Win: Decrease stake by step down to baseStake
+          this.dalembertStepCount = Math.max(0, this.dalembertStepCount - 1);
+          const step = this.config.dalembertStep || 0.35;
+          let nextStake = Math.max(this.config.baseStake, this.status.currentStake - step);
+          this.status.currentStake = Math.max(0.35, Number(nextStake.toFixed(2)));
+        } else if (this.config.stakeMode === 'REVERSE_DALEMBERT') {
+          // Contra-D'Alembert on Win: Increase stake by step
+          const step = this.config.dalembertStep || 0.35;
+          let nextStake = this.status.currentStake + step;
+          if (this.config.maxStakeCap > 0 && nextStake > this.config.maxStakeCap) {
+            nextStake = this.config.maxStakeCap;
+          }
+          this.status.currentStake = Math.max(0.35, Number(nextStake.toFixed(2)));
+        } else if (this.config.stakeMode === 'FIBONACCI') {
+          // Fibonacci on Win: Move back 2 steps
+          this.fibonacciIndex = Math.max(0, this.fibonacciIndex - 2);
+          const mult = FIBONACCI_STEPS[this.fibonacciIndex] || 1;
+          let nextStake = this.config.baseStake * mult;
+          if (this.config.maxStakeCap > 0 && nextStake > this.config.maxStakeCap) {
+            nextStake = this.config.maxStakeCap;
+          }
+          this.status.currentStake = Math.max(0.35, Number(nextStake.toFixed(2)));
+        } else if (this.config.stakeMode === 'PAROLI') {
+          // Paroli on Win: Scale stake up to consecutive win target, then bank
+          const targetWins = this.config.paroliConsecutiveTarget || 3;
+          if (this.status.consecutiveWins < targetWins) {
+            const mult = this.config.paroliMultiplier || 2.0;
+            let nextStake = this.status.currentStake * mult;
+            if (this.config.maxStakeCap > 0 && nextStake > this.config.maxStakeCap) {
+              nextStake = this.config.maxStakeCap;
+            }
+            this.status.currentStake = Math.max(0.35, Number(nextStake.toFixed(2)));
+          } else {
+            // Target reached! Bank profit and reset to base stake
+            this.status.currentStake = this.config.baseStake;
+          }
+        } else if (this.config.stakeMode === 'OSCARS_GRIND') {
+          // Oscar's Grind: Goal is +1 unit per cycle
+          this.oscarsCycleProfit += profit;
+          const targetProfit = (this.config.oscarsTargetUnit || 1) * this.config.baseStake;
+          if (this.oscarsCycleProfit >= targetProfit) {
+            // Target achieved: reset cycle
+            this.oscarsCycleProfit = 0;
+            this.status.currentStake = this.config.baseStake;
+          } else {
+            // Increase stake by 1 unit
+            let nextStake = this.status.currentStake + this.config.baseStake;
+            if (this.config.maxStakeCap > 0 && nextStake > this.config.maxStakeCap) {
+              nextStake = this.config.maxStakeCap;
+            }
+            this.status.currentStake = Math.max(0.35, Number(nextStake.toFixed(2)));
+          }
+        } else if (this.config.stakeMode === 'KELLY_CRITERION') {
+          const newBal = Math.max(0, this.accountBalance + profit);
+          const fraction = this.config.kellyFraction || 0.25;
+          let nextStake = newBal * fraction * 0.08;
+          if (this.config.maxStakeCap > 0 && nextStake > this.config.maxStakeCap) {
+            nextStake = this.config.maxStakeCap;
+          }
+          this.status.currentStake = Math.max(0.35, Number(nextStake.toFixed(2)));
         } else if (this.config.stakeMode === 'MARTINGALE' || this.config.stakeMode === 'FLAT') {
           this.status.currentStake = this.config.baseStake;
         }
@@ -1169,6 +1247,44 @@ class DerivDigitScannerBotEngine {
             this.status.currentMartingaleStep = 0;
             this.status.currentStake = this.config.baseStake;
           }
+        } else if (this.config.stakeMode === 'DALEMBERT') {
+          // D'Alembert on Loss: Increase stake by step
+          this.dalembertStepCount++;
+          const step = this.config.dalembertStep || 0.35;
+          let nextStake = this.status.currentStake + step;
+          if (this.config.maxStakeCap > 0 && nextStake > this.config.maxStakeCap) {
+            nextStake = this.config.maxStakeCap;
+          }
+          this.status.currentStake = Math.max(0.35, Number(nextStake.toFixed(2)));
+        } else if (this.config.stakeMode === 'REVERSE_DALEMBERT') {
+          // Contra-D'Alembert on Loss: Decrease stake by step down to baseStake
+          const step = this.config.dalembertStep || 0.35;
+          let nextStake = Math.max(this.config.baseStake, this.status.currentStake - step);
+          this.status.currentStake = Math.max(0.35, Number(nextStake.toFixed(2)));
+        } else if (this.config.stakeMode === 'FIBONACCI') {
+          // Fibonacci on Loss: Move forward 1 step
+          this.fibonacciIndex = Math.min(FIBONACCI_STEPS.length - 1, this.fibonacciIndex + 1);
+          const mult = FIBONACCI_STEPS[this.fibonacciIndex] || 1;
+          let nextStake = this.config.baseStake * mult;
+          if (this.config.maxStakeCap > 0 && nextStake > this.config.maxStakeCap) {
+            nextStake = this.config.maxStakeCap;
+          }
+          this.status.currentStake = Math.max(0.35, Number(nextStake.toFixed(2)));
+        } else if (this.config.stakeMode === 'PAROLI') {
+          // Paroli on Loss: Reset to base stake
+          this.status.currentStake = this.config.baseStake;
+        } else if (this.config.stakeMode === 'OSCARS_GRIND') {
+          // Oscar's Grind on Loss: Stake stays same
+          this.oscarsCycleProfit += profit;
+          // Keep current stake
+        } else if (this.config.stakeMode === 'KELLY_CRITERION') {
+          const newBal = Math.max(0, this.accountBalance + profit);
+          const fraction = this.config.kellyFraction || 0.25;
+          let nextStake = newBal * fraction * 0.08;
+          if (this.config.maxStakeCap > 0 && nextStake > this.config.maxStakeCap) {
+            nextStake = this.config.maxStakeCap;
+          }
+          this.status.currentStake = Math.max(0.35, Number(nextStake.toFixed(2)));
         } else if (this.config.stakeMode === 'BALANCE_PERCENT') {
           const newBal = Math.max(0, this.accountBalance + profit);
           let nextStake = newBal * (this.config.compoundBalancePct / 100);

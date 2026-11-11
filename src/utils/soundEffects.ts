@@ -153,6 +153,31 @@ class SoundManager {
     this.playTradeTakenSound();
   }
 
+  playAlert() {
+    try {
+      this.initCtx();
+      if (!this.ctx) return;
+      const now = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(880, now);
+      osc.frequency.setValueAtTime(1174.66, now + 0.1);
+      gain.gain.setValueAtTime(0.18, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.32);
+    } catch (e) {
+      console.warn('Audio error', e);
+    }
+  }
+
+  playPatternDetected() {
+    this.playAlert();
+  }
+
   playLaser() {
     try {
       this.initCtx();

@@ -82,7 +82,9 @@ export function getStoredAccounts(): DerivOAuthAccount[] {
     const stored = localStorage.getItem('deriv_accounts');
     if (stored) {
       const parsed = JSON.parse(stored);
-      if (Array.isArray(parsed)) return parsed;
+      if (Array.isArray(parsed)) {
+        return parsed.filter((a) => a && a.account && a.account !== 'Manual_Token');
+      }
     }
   } catch (e) {}
   return [];

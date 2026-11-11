@@ -394,7 +394,7 @@ export const DBotStudio: React.FC<DBotStudioProps> = ({
       const currentPing = derivWS.getPingMs();
       const tickAge = derivWS.getTickAgeMs(params.symbol);
       const latencyCheck = strategyShield.checkLatencySafe(currentPing, tickAge);
-      if (!latencyCheck.safe) {
+      if (!latencyCheck.safe && currentPing > 3500) {
         log(`🛡️ [SHIELD] ⚠️ Latency Spike Intercept (${currentPing}ms): ${latencyCheck.reason}`);
         return { primaryContract: null, contractIds: [] };
       }
@@ -2202,6 +2202,46 @@ export const DBotStudio: React.FC<DBotStudioProps> = ({
         }
       }
 
+      if (isDigit5Auto) {
+        const last3 = updatedWindow.slice(-3);
+        const totalSample = last3.length;
+        if (totalSample < 3) {
+          setPatternStatus(`BUFFERING [${last3.join(', ')}] (${totalSample}/3 ticks) • Waiting for 3 ticks...`);
+          return;
+        }
+        const count5 = last3.filter((d) => d === 5).length;
+        if (count5 < 2) {
+          setPatternStatus(`SCANNING [${last3.join(', ')}] • Digit 5 count: ${count5}/2 needed in 3 ticks`);
+          return;
+        }
+
+        // TRIGGER MATCH: Digit 5 appeared at least twice in 3 digits!
+        singleInTradeRef.current = true;
+        singleDigitsRef.current = []; // Flush buffer so next trade requires fresh 3 digits
+        if (waitForContractCloseRef.current) {
+          globalContractActiveRef.current = true;
+          activeContractMarketRef.current = botSymbol;
+        }
+        const stakeAmt = singleStakeRef.current;
+        if (soundEnabledRef.current) soundManager.playTradeTakenSound();
+
+        log(`⚡ [${botSymbol}] DIGIT 5 AUTO: Pattern [${last3.join(', ')}] (Digit 5 appeared ${count5}x in 3 ticks) → BUY DIGITDIFF 5 (1-tick) | Stake: $${stakeAmt.toFixed(2)}`);
+        setPatternStatus(`IN_TRADE (Differ 5 - Pattern [${last3.join(', ')}])`);
+
+        const contract = derivWS.purchaseContract({
+          symbol: botSymbol,
+          contractType: 'DIGITDIFF',
+          stake: stakeAmt,
+          durationTicks: 1,
+          targetDigit: 5,
+          barrier: 5,
+          symbolName: markets.find((m) => m.symbol === botSymbol)?.displayName || botSymbol,
+        });
+
+        singleActiveContractRef.current = contract.id;
+        return;
+      }
+
       if (isQuantum90Differ) {
         const totalSample = updatedWindow.length;
         const counts = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
@@ -2801,11 +2841,31 @@ export const DBotStudio: React.FC<DBotStudioProps> = ({
           setPatternStatus(`SCANNING [${last9.join(', ')}] • Top: [${maxFreqDigit}] (${maxFreqCount}/4x) • Differ Target: [${targetDiffer}]`);
         }
       } else {
-        // Fallback for custom / other digit bots
+        // Fallback for custom / other digit bots - strictly check rules before trading
+        const trigger = activeBot?.rules?.indicatorTrigger;
         const last2 = updatedWindow.slice(-2);
-        if (last2.length >= 2) {
-          const [d1, d2] = last2;
-          const target = d2;
+        const last3 = updatedWindow.slice(-3);
+
+        if (trigger === 'LOWEST_FREQUENCY_DIGIT' || trigger === 'MOST_FREQUENT_DIGIT') {
+          if (updatedWindow.length < 8) {
+            setPatternStatus(`COLLECTING_TICKS (${updatedWindow.length}/8) • Analyzing frequency`);
+            return;
+          }
+          const counts: Record<number, number> = {};
+          for (let d = 0; d <= 9; d++) counts[d] = 0;
+          updatedWindow.forEach((d) => { counts[d] = (counts[d] || 0) + 1; });
+          let target = 0;
+          if (trigger === 'LOWEST_FREQUENCY_DIGIT') {
+            let minCount = 999;
+            for (let d = 0; d <= 9; d++) {
+              if (counts[d] < minCount) { minCount = counts[d]; target = d; }
+            }
+          } else {
+            let maxCount = -1;
+            for (let d = 0; d <= 9; d++) {
+              if (counts[d] > maxCount) { maxCount = counts[d]; target = d; }
+            }
+          }
           singleInTradeRef.current = true;
           if (waitForContractCloseRef.current) {
             globalContractActiveRef.current = true;
@@ -2828,10 +2888,76 @@ export const DBotStudio: React.FC<DBotStudioProps> = ({
           });
 
           singleActiveContractRef.current = contract.id;
+        } else if ((trigger as string) === 'DOUBLE_IDENTICAL_DIFF' || activeBot?.name?.toLowerCase().includes('double')) {
+          if (last2.length < 2) {
+            setPatternStatus(`COLLECTING_TICKS (${last2.length}/2)`);
+            return;
+          }
+          const [d1, d2] = last2;
+          if (d1 === d2) {
+            singleInTradeRef.current = true;
+            if (waitForContractCloseRef.current) {
+              globalContractActiveRef.current = true;
+              activeContractMarketRef.current = botSymbol;
+            }
+            const stakeAmt = singleStakeRef.current;
+            if (soundEnabledRef.current) soundManager.playTradeTakenSound();
+
+            log(`🎯 [${botSymbol}] ${activeBot.name} [${d1}, ${d2}] → BUY ${contractType} ${d2} (1-tick) | Stake: $${stakeAmt.toFixed(2)}`);
+            setPatternStatus('IN_TRADE');
+
+            const contract = derivWS.purchaseContract({
+              symbol: botSymbol,
+              contractType: contractType || 'DIGITDIFF',
+              stake: stakeAmt,
+              durationTicks: 1,
+              targetDigit: d2,
+              barrier: d2,
+              symbolName: markets.find((m) => m.symbol === botSymbol)?.displayName || botSymbol,
+            });
+
+            singleActiveContractRef.current = contract.id;
+          } else {
+            setPatternStatus(`SCANNING [${d1}, ${d2}] • Waiting for identical pair [X, X]`);
+          }
+        } else if ((trigger as string) === 'TRIPLE_IDENTICAL_DIFF' || activeBot?.name?.toLowerCase().includes('triple')) {
+          if (last3.length < 3) {
+            setPatternStatus(`COLLECTING_TICKS (${last3.length}/3)`);
+            return;
+          }
+          const [x1, x2, x3] = last3;
+          if (x1 === x2 && x2 === x3) {
+            singleInTradeRef.current = true;
+            if (waitForContractCloseRef.current) {
+              globalContractActiveRef.current = true;
+              activeContractMarketRef.current = botSymbol;
+            }
+            const stakeAmt = singleStakeRef.current;
+            if (soundEnabledRef.current) soundManager.playTradeTakenSound();
+
+            log(`🎯 [${botSymbol}] ${activeBot.name} [${x1}, ${x2}, ${x3}] → BUY ${contractType} ${x3} (1-tick) | Stake: $${stakeAmt.toFixed(2)}`);
+            setPatternStatus('IN_TRADE');
+
+            const contract = derivWS.purchaseContract({
+              symbol: botSymbol,
+              contractType: contractType || 'DIGITDIFF',
+              stake: stakeAmt,
+              durationTicks: 1,
+              targetDigit: x3,
+              barrier: x3,
+              symbolName: markets.find((m) => m.symbol === botSymbol)?.displayName || botSymbol,
+            });
+
+            singleActiveContractRef.current = contract.id;
+          } else {
+            setPatternStatus(`SCANNING [${x1}, ${x2}, ${x3}] • Waiting for triple [X, X, X]`);
+          }
+        } else {
+          setPatternStatus(`SCANNING [${updatedWindow.slice(-4).join(', ')}] • Waiting for pattern trigger`);
         }
       }
     },
-    [botSymbol, isFrequencyBot, isSkipXDiffer, isDoubleDifferRange, isTripleIdentical, isEntryTrippleThreat, isXxyDifferX, isXxy, isSDiffer, isRecurringDigit, isAlternating, activeBot, contractType, markets, log]
+    [botSymbol, isPercentageLock, isDigit5Auto, isQuantum90Differ, isFrequencyBot, isSkipXDiffer, isDoubleDifferRange, isTripleIdentical, isEntryTrippleThreat, isOnlyUpDownHedge, isXxyDifferX, isXxy, isSDiffer, isRecurringDigit, isAlternating, activeBot, contractType, markets, log]
   );
 
   // Settlement listener (Executes audio alerts + session P&L calculation on every trade closed)
@@ -3083,6 +3209,11 @@ export const DBotStudio: React.FC<DBotStudioProps> = ({
   const startAllScanners = () => {
     stopAllScanners();
     processedSettlementsRef.current.clear();
+
+    // Reset Strategy Shield locks so fresh bot session starts unblocked
+    strategyShield.resetCircuitBreaker();
+    strategyShield.resetProfitLock();
+    strategyShield.clearAnomalies();
 
     runningRef.current = true;
     setIsRunning(true);

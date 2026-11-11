@@ -3,7 +3,9 @@ import { MarketInfo, MarketSymbol, ActiveContract, Tick } from '../../types/deri
 import { derivWS, extractDerivLastDigit, formatDerivQuote, getMarketPipSize } from '../../services/derivWebSocket';
 import { soundManager } from '../../utils/soundEffects';
 import { AiScannerBotPanel } from './AiScannerBotPanel';
-import { MatrixColdestDormancyBotPanel } from './MatrixColdestDormancyBotPanel';
+import { DigitSelectDifferBotPanel } from './DigitSelectDifferBotPanel';
+import { ColdestFrequencyBotPanel } from './ColdestFrequencyBotPanel';
+import { HigherLowerHedgingPanel } from '../HigherLowerHedging/HigherLowerHedgingPanel';
 import {
   Activity,
   TrendingUp,
@@ -17,6 +19,7 @@ import {
   XCircle,
   Clock,
   RotateCcw,
+  GitFork,
   Zap,
   BarChart2,
   Table,
@@ -33,6 +36,7 @@ import {
   RefreshCw,
   Bot,
   Radar,
+  Crosshair,
 } from 'lucide-react';
 
 interface DerivDigitTraderProps {
@@ -53,28 +57,6 @@ interface DigitStat {
   isCurrent: boolean;
 }
 
-interface MarketMatrixRow {
-  symbol: MarketSymbol;
-  name: string;
-  shortName: string;
-  price: number;
-  pipSize: number;
-  lastDigit: number;
-  change: number;
-  hotDigit: number;
-  hotPct: number;
-  coldDigit: number;
-  coldPct: number;
-  coldCount: number;
-  coldDormancy: number; // ticks since cold digit was last seen
-  recentDigits: number[]; // last 7-8 digits for visual flow
-  digitPercentages: number[];
-  evenPct: number;
-  oddPct: number;
-  isSuperCold: boolean;
-  isOneSecond: boolean;
-}
-
 export const DerivDigitTrader: React.FC<DerivDigitTraderProps> = ({
   markets,
   balanceUsd,
@@ -83,7 +65,7 @@ export const DerivDigitTrader: React.FC<DerivDigitTraderProps> = ({
 }) => {
   const [selectedSymbol, setSelectedSymbol] = useState<MarketSymbol>(initialSymbol);
   const [sampleSize, setSampleSize] = useState<number>(100);
-  const [activeTab, setActiveTab] = useState<'trader' | 'ai_scanner' | 'matrix' | 'history'>('ai_scanner');
+  const [activeTab, setActiveTab] = useState<'trader' | 'ai_scanner' | 'digit_select_differ' | 'coldest_frequency' | 'higher_lower_hedging' | 'history'>('ai_scanner');
   const [tradeType, setTradeType] = useState<DerivTradeType>('MATCH_DIFF');
 
   // Trade inputs
@@ -96,19 +78,6 @@ export const DerivDigitTrader: React.FC<DerivDigitTraderProps> = ({
   const [targetDigit, setTargetDigit] = useState<number>(5);
   const [barrierDigit, setBarrierDigit] = useState<number>(4);
 
-  // Matrix 1-Click Coldest Differ specific controls
-  const [matrixStake, setMatrixStake] = useState<number>(1.0);
-  const [matrixDurationTicks, setMatrixDurationTicks] = useState<number>(1);
-  const [matrixScope, setMatrixScope] = useState<'ALL' | 'STANDARD' | '1S'>('ALL');
-  const [matrixViewMode, setMatrixViewMode] = useState<'table' | 'cards'>('table');
-  const [executingMatrixSymbol, setExecutingMatrixSymbol] = useState<string | null>(null);
-  const [lastMatrixAction, setLastMatrixAction] = useState<{
-    symbol: string;
-    digit: number;
-    time: number;
-    label: string;
-  } | null>(null);
-
   // Live state
   const [tickHistory, setTickHistory] = useState<number[]>([]);
   const [timeHistory, setTimeHistory] = useState<number[]>([]);
@@ -120,9 +89,8 @@ export const DerivDigitTrader: React.FC<DerivDigitTraderProps> = ({
   const [tradeHistory, setTradeHistory] = useState<ActiveContract[]>([]);
   const [isPlacingTrade, setIsPlacingTrade] = useState<boolean>(false);
   const [tradeMessage, setTradeMessage] = useState<string | null>(null);
-
-  // Multi-market matrix storage
-  const [matrixData, setMatrixData] = useState<Record<string, number[]>>({});
+  // ⚡ 1-Tap Immediate Differ Buy on digit click (tapping becomes start button, 1 contract per tap)
+  const [instantTapDifferBuy, setInstantTapDifferBuy] = useState<boolean>(true);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -211,41 +179,6 @@ export const DerivDigitTrader: React.FC<DerivDigitTraderProps> = ({
     };
   }, [selectedSymbol]);
 
-  // Track matrix market ticks for the multi-market overview
-  useEffect(() => {
-    const targetMarkets: MarketSymbol[] = [
-      'R_10', 'R_25', 'R_50', 'R_75', 'R_100',
-      '1HZ10V', '1HZ25V', '1HZ50V', '1HZ75V', '1HZ100V',
-      '1HZ150V', '1HZ250V',
-    ];
-
-    const unsubscribers = targetMarkets.map((sym) => {
-      const onHist = (data: { symbol: MarketSymbol; prices: number[] }) => {
-        if (data.prices && data.prices.length > 0) {
-          setMatrixData((prev) => ({ ...prev, [sym]: data.prices.slice(-100) }));
-        }
-      };
-      const onTk = (tick: Tick) => {
-        setMatrixData((prev) => {
-          const existing = prev[sym] || [];
-          return { ...prev, [sym]: [...existing, tick.quote].slice(-100) };
-        });
-      };
-
-      derivWS.subscribeHistory(sym, onHist);
-      derivWS.subscribeTicks(sym, onTk);
-      derivWS.requestTicksHistory(sym, 100);
-
-      return () => {
-        derivWS.unsubscribeHistory(sym, onHist);
-        derivWS.unsubscribeTicks(sym, onTk);
-      };
-    });
-
-    return () => {
-      unsubscribers.forEach((unsub) => unsub());
-    };
-  }, []);
 
   // Listen for contract completion
   useEffect(() => {
@@ -551,176 +484,44 @@ export const DerivDigitTrader: React.FC<DerivDigitTraderProps> = ({
     }
   };
 
-  // ⚡ 1-Click Coldest Digit Differ Matrix Execution
-  const handleMatrixTradeColdestDiffer = (row: MarketMatrixRow) => {
-    if (isPlacingTrade) return;
-    setIsPlacingTrade(true);
-    setExecutingMatrixSymbol(row.symbol);
-    soundManager.playStart();
+  // ⚡ 1-Tap Immediate Differ Buy on digit click (tapping becomes start button, strictly 1 contract per tapping)
+  const handleDigitTapDifferBuy = (digit: number) => {
+    setTargetDigit(digit);
+    setBarrierDigit(digit);
 
-    const targetColdDigit = row.coldDigit;
-    setLastMatrixAction({
-      symbol: row.symbol,
-      digit: targetColdDigit,
-      time: Date.now(),
-      label: `Differ ≠ ${targetColdDigit} on ${row.shortName}`,
-    });
+    if (instantTapDifferBuy) {
+      if (isPlacingTrade) return; // Strict lock: exactly 1 contract per tapping
+      setIsPlacingTrade(true);
+      soundManager.playStart();
 
-    try {
-      const contract = derivWS.purchaseContract({
-        symbol: row.symbol,
-        contractType: 'DIGITDIFF',
-        stake: matrixStake,
-        durationTicks: matrixDurationTicks,
-        targetDigit: targetColdDigit,
-        symbolName: row.name,
-      });
+      try {
+        const contract = derivWS.purchaseContract({
+          symbol: selectedSymbol,
+          contractType: 'DIGITDIFF',
+          stake,
+          durationTicks: 1, // 1-tick contract
+          targetDigit: digit,
+          symbolName: currentMarket.displayName,
+        });
 
-      setTradeMessage(`🎯 [Matrix Trade] Differed Coldest Digit ${targetColdDigit} on ${row.name} (${row.coldPct}% freq, dormant ${row.coldDormancy}t, stake: $${matrixStake.toFixed(2)}) - ID: ${contract.id.slice(-6)}`);
-    } catch (err: any) {
-      console.error('Matrix trade placement error:', err);
-      soundManager.playLoss();
-      setTradeMessage(`⚠️ Matrix Trade Failed: ${err.message || 'Network error'}`);
-    } finally {
-      setTimeout(() => {
-        setIsPlacingTrade(false);
-        setExecutingMatrixSymbol(null);
-      }, 400);
+        setTradeMessage(
+          `⚡ 1-Tap Differ Placed! ≠ Digit ${digit} on ${currentMarket.displayName} (Stake: $${stake.toFixed(2)}) ID: ${contract.id.slice(-6)}`
+        );
+      } catch (err: any) {
+        console.error('Instant Differ Buy error:', err);
+        soundManager.playLoss();
+        setTradeMessage(`⚠️ Differ Buy Failed: ${err.message || 'Network error'}`);
+      } finally {
+        setTimeout(() => {
+          setIsPlacingTrade(false);
+        }, 350);
+      }
+    } else {
+      soundManager.playButtonClick();
     }
   };
 
-  // Multi-market matrix calculation
-  const matrixRows: MarketMatrixRow[] = useMemo(() => {
-    const list: MarketSymbol[] = [
-      'R_10', 'R_25', 'R_50', 'R_75', 'R_100',
-      '1HZ10V', '1HZ25V', '1HZ50V', '1HZ75V', '1HZ100V',
-      '1HZ150V', '1HZ250V',
-    ];
 
-    const shortNames: Record<string, string> = {
-      'R_10': 'Vol 10',
-      'R_25': 'Vol 25',
-      'R_50': 'Vol 50',
-      'R_75': 'Vol 75',
-      'R_100': 'Vol 100',
-      '1HZ10V': 'Vol 10 (1s)',
-      '1HZ25V': 'Vol 25 (1s)',
-      '1HZ50V': 'Vol 50 (1s)',
-      '1HZ75V': 'Vol 75 (1s)',
-      '1HZ100V': 'Vol 100 (1s)',
-      '1HZ150V': 'Vol 150 (1s)',
-      '1HZ250V': 'Vol 250 (1s)',
-    };
-
-    return list.map((sym) => {
-      const prices = matrixData[sym] || [];
-      const mPip = getMarketPipSize(sym);
-      const mName = markets.find((m) => m.symbol === sym)?.displayName || shortNames[sym] || sym;
-      const sName = shortNames[sym] || sym;
-      const isOneSecond = sym.startsWith('1HZ');
-      const lastPrice = prices.length > 0 ? prices[prices.length - 1] : 0;
-      const prevPrice = prices.length > 1 ? prices[prices.length - 2] : lastPrice;
-      const change = lastPrice - prevPrice;
-      const lastDigit = extractDerivLastDigit(lastPrice, mPip, sym);
-
-      const digits = prices.map((p) => extractDerivLastDigit(p, mPip, sym));
-      const total = digits.length || 1;
-      const counts = new Array(10).fill(0);
-      let evenCount = 0;
-      let oddCount = 0;
-
-      for (const d of digits) {
-        if (d >= 0 && d <= 9) {
-          counts[d]++;
-          if (d % 2 === 0) evenCount++;
-          else oddCount++;
-        }
-      }
-
-      // Calculate dormancy (ticks since each digit was last seen)
-      const dormancy = new Array(10).fill(0);
-      for (let i = 0; i < 10; i++) {
-        const lastIdx = digits.lastIndexOf(i);
-        dormancy[i] = lastIdx >= 0 ? digits.length - 1 - lastIdx : (digits.length > 0 ? digits.length : 0);
-      }
-
-      // Calculate recent 25-tick counts to identify what is coldest RECENTLY
-      const recent25 = digits.slice(-25);
-      const counts25 = new Array(10).fill(0);
-      for (const d of recent25) {
-        if (d >= 0 && d <= 9) counts25[d]++;
-      }
-
-      // Find hottest digit
-      let hotDigit = 0;
-      let hotCount = -1;
-      for (let i = 0; i < 10; i++) {
-        if (counts[i] > hotCount) {
-          hotCount = counts[i];
-          hotDigit = i;
-        }
-      }
-
-      // Identify the digit that has become the COLDEST RECENTLY
-      // Multi-factor ranking:
-      // 1. Lowest frequency in rolling sample (count in 100t)
-      // 2. Lowest frequency in micro recent sample (count in 25t)
-      // 3. Highest dormancy (number of ticks since last appearance)
-      let coldDigit = 0;
-      let minColdScore = Infinity;
-
-      for (let i = 0; i < 10; i++) {
-        // Lower coldScore = colder recently
-        const coldScore = counts[i] * 2.0 + counts25[i] * 3.0 - (dormancy[i] * 0.15);
-        if (coldScore < minColdScore) {
-          minColdScore = coldScore;
-          coldDigit = i;
-        }
-      }
-
-      const coldCount = counts[coldDigit];
-      const coldDormancy = dormancy[coldDigit];
-      const hotPct = Number(((hotCount / total) * 100).toFixed(1));
-      const coldPct = Number(((coldCount / total) * 100).toFixed(1));
-      const evenPct = Number(((evenCount / total) * 100).toFixed(1));
-      const oddPct = Number(((oddCount / total) * 100).toFixed(1));
-      const digitPercentages = counts.map((c) => Number(((c / total) * 100).toFixed(1)));
-      const isSuperCold = coldPct <= 5.0 || coldDormancy >= 15;
-      const recentDigits = digits.slice(-8);
-
-      return {
-        symbol: sym,
-        name: mName,
-        shortName: sName,
-        price: lastPrice,
-        pipSize: mPip,
-        lastDigit,
-        change,
-        hotDigit,
-        hotPct,
-        coldDigit,
-        coldPct,
-        coldCount,
-        coldDormancy,
-        recentDigits,
-        digitPercentages,
-        evenPct,
-        oddPct,
-        isSuperCold,
-        isOneSecond,
-      };
-    });
-  }, [matrixData, markets]);
-
-  const filteredMatrixRows = useMemo(() => {
-    if (matrixScope === 'STANDARD') {
-      return matrixRows.filter((r) => !r.isOneSecond);
-    }
-    if (matrixScope === '1S') {
-      return matrixRows.filter((r) => r.isOneSecond);
-    }
-    return matrixRows;
-  }, [matrixRows, matrixScope]);
 
   return (
     <div className="space-y-4 text-slate-100 pb-12">
@@ -750,12 +551,13 @@ export const DerivDigitTrader: React.FC<DerivDigitTraderProps> = ({
                     </optgroup>
                     <optgroup label="1-Second (1s) Volatility Indices">
                       <option value="1HZ10V">Volatility 10 (1s) Index</option>
+                      <option value="1HZ15V">Volatility 15 (1s) Index</option>
                       <option value="1HZ25V">Volatility 25 (1s) Index</option>
+                      <option value="1HZ30V">Volatility 30 (1s) Index</option>
                       <option value="1HZ50V">Volatility 50 (1s) Index</option>
                       <option value="1HZ75V">Volatility 75 (1s) Index</option>
+                      <option value="1HZ90V">Volatility 90 (1s) Index</option>
                       <option value="1HZ100V">Volatility 100 (1s) Index</option>
-                      <option value="1HZ150V">Volatility 150 (1s) Index</option>
-                      <option value="1HZ250V">Volatility 250 (1s) Index</option>
                     </optgroup>
                   </select>
                   <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono border border-emerald-500/40">
@@ -834,6 +636,34 @@ export const DerivDigitTrader: React.FC<DerivDigitTraderProps> = ({
                 </span>
               </button>
               <button
+                onClick={() => setActiveTab('coldest_frequency')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all ${
+                  activeTab === 'coldest_frequency'
+                    ? 'bg-gradient-to-r from-cyan-500 via-sky-500 to-indigo-500 text-slate-950 shadow-md shadow-cyan-500/30 font-black ring-1 ring-cyan-300'
+                    : 'text-slate-400 hover:text-cyan-400'
+                }`}
+              >
+                <Snowflake className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Coldest Frequency</span>
+                <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-cyan-950/80 text-cyan-300 border border-cyan-500/40 font-mono">
+                  Lowest Freq (500t) & 6%
+                </span>
+              </button>
+              <button
+                onClick={() => setActiveTab('higher_lower_hedging')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all ${
+                  activeTab === 'higher_lower_hedging'
+                    ? 'bg-gradient-to-r from-emerald-500 via-teal-400 to-indigo-500 text-slate-950 shadow-md shadow-emerald-500/30 font-black ring-1 ring-emerald-300'
+                    : 'text-slate-400 hover:text-emerald-400'
+                }`}
+              >
+                <GitFork className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Higher/Lower Hedging</span>
+                <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-emerald-950/80 text-emerald-300 border border-emerald-500/40 font-mono">
+                  +1100% Payout
+                </span>
+              </button>
+              <button
                 onClick={() => setActiveTab('trader')}
                 className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all ${
                   activeTab === 'trader'
@@ -845,17 +675,17 @@ export const DerivDigitTrader: React.FC<DerivDigitTraderProps> = ({
                 <span>Digit Trader</span>
               </button>
               <button
-                onClick={() => setActiveTab('matrix')}
+                onClick={() => setActiveTab('digit_select_differ')}
                 className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all ${
-                  activeTab === 'matrix'
-                    ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md shadow-emerald-500/20'
-                    : 'text-slate-400 hover:text-white'
+                  activeTab === 'digit_select_differ'
+                    ? 'bg-gradient-to-r from-rose-500 via-pink-600 to-fuchsia-600 text-white shadow-md shadow-rose-500/25 font-black ring-1 ring-rose-400'
+                    : 'text-slate-400 hover:text-rose-400'
                 }`}
               >
-                <Table className="w-3.5 h-3.5" />
-                <span>Market Matrix & 4T Bot</span>
-                <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 font-mono border border-emerald-500/40">
-                  4T BOT
+                <Crosshair className="w-3.5 h-3.5 text-rose-300" />
+                <span>Digit Select Differ</span>
+                <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-rose-950/80 text-rose-300 border border-rose-500/30 font-mono">
+                  ≠ Target • 1t
                 </span>
               </button>
               <button
@@ -889,6 +719,25 @@ export const DerivDigitTrader: React.FC<DerivDigitTraderProps> = ({
         <AiScannerBotPanel balanceUsd={balanceUsd} onUpdateBalance={onUpdateBalance} />
       )}
 
+      {/* ❄️ COLDEST FREQUENCY BOT PANEL (≤ 6.0% Drop Differ Sniper • 1-Tick Settle) */}
+      {activeTab === 'coldest_frequency' && (
+        <ColdestFrequencyBotPanel
+          balanceUsd={balanceUsd}
+          onUpdateBalance={onUpdateBalance}
+          activeMarketSymbol={selectedSymbol}
+        />
+      )}
+
+      {/* ⚡ HIGHER / LOWER HEDGING BOT PANEL (+1100% Payout Dual Straddle) */}
+      {activeTab === 'higher_lower_hedging' && (
+        <HigherLowerHedgingPanel
+          markets={markets}
+          balanceUsd={balanceUsd}
+          onUpdateBalance={onUpdateBalance}
+          initialSymbol={selectedSymbol}
+        />
+      )}
+
       {activeTab === 'trader' && (
         <>
           {/* 📊 DERIV OFFICIAL DIGIT PERCENTAGES (0 - 9) DISTRIBUTION BARS */}
@@ -907,8 +756,24 @@ export const DerivDigitTrader: React.FC<DerivDigitTraderProps> = ({
                 </p>
               </div>
 
-              {/* Hot & Cold Summary Badges */}
-              <div className="flex items-center gap-2">
+              {/* Hot & Cold Summary Badges & 1-Tap Differ Buy Toggle */}
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setInstantTapDifferBuy(!instantTapDifferBuy)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer border ${
+                    instantTapDifferBuy
+                      ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 border-emerald-300 shadow-md shadow-emerald-500/30 ring-2 ring-emerald-400/50'
+                      : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white'
+                  }`}
+                  title="When enabled, tapping any digit button immediately acts as a start button to purchase 1 Differ contract ≠ that digit"
+                >
+                  <Zap className={`w-3.5 h-3.5 ${instantTapDifferBuy ? 'text-slate-950 fill-current' : 'text-emerald-400'}`} />
+                  <span>1-Tap Differ Buy: {instantTapDifferBuy ? 'ACTIVE' : 'OFF'}</span>
+                  <span className={`text-[9px] px-1.5 py-0.2 rounded font-mono ${instantTapDifferBuy ? 'bg-slate-950 text-emerald-300' : 'bg-slate-900 text-slate-400'}`}>
+                    1 Contract / Tap
+                  </span>
+                </button>
                 <div className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-xs font-semibold text-emerald-300">
                   <Flame className="w-3.5 h-3.5 text-emerald-400" />
                   <span>Hottest: <strong className="text-white font-mono">{hotDigitStat?.digit}</strong> ({hotDigitStat?.percentage}%)</span>
@@ -917,10 +782,22 @@ export const DerivDigitTrader: React.FC<DerivDigitTraderProps> = ({
                   <Snowflake className="w-3.5 h-3.5 text-rose-400" />
                   <span>Coldest: <strong className="text-white font-mono">{coldDigitStat?.digit}</strong> ({coldDigitStat?.percentage}%)</span>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('coldest_frequency')}
+                  className="flex items-center gap-1.5 px-2.5 py-1 bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/40 rounded-lg text-xs font-bold text-cyan-300 transition-all cursor-pointer"
+                  title="Open Coldest Frequency Bot (≤6.0% Differ Sniper)"
+                >
+                  <Snowflake className="w-3.5 h-3.5 text-cyan-400 animate-spin-slow" />
+                  <span>Coldest Frequency Bot</span>
+                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-cyan-950 text-cyan-300 font-mono">
+                    ≤6.0% Differ
+                  </span>
+                </button>
               </div>
             </div>
 
-            {/* 10 Vertical Percentage Bars */}
+            {/* 10 Vertical Percentage Bars - Tap any digit to immediately BUY Differ */}
             <div className="grid grid-cols-10 gap-1.5 sm:gap-2.5 pt-4 pb-2">
               {digitStats.map((item) => {
                 const maxPct = Math.max(...digitStats.map((d) => d.percentage), 20);
@@ -942,18 +819,20 @@ export const DerivDigitTrader: React.FC<DerivDigitTraderProps> = ({
                 return (
                   <button
                     key={item.digit}
-                    onClick={() => {
-                      setTargetDigit(item.digit);
-                      setBarrierDigit(item.digit);
-                      soundManager.playButtonClick();
-                    }}
-                    className={`flex flex-col items-center justify-end group transition-all p-1.5 rounded-xl border ${
+                    disabled={isPlacingTrade}
+                    onClick={() => handleDigitTapDifferBuy(item.digit)}
+                    className={`flex flex-col items-center justify-end group transition-all p-1.5 rounded-xl border cursor-pointer relative ${
                       targetDigit === item.digit
-                        ? 'bg-slate-800/90 border-emerald-500 ring-2 ring-emerald-500/40'
+                        ? 'bg-slate-800/90 border-emerald-500 ring-2 ring-emerald-500/40 shadow-lg shadow-emerald-500/20'
                         : item.isCurrent
                         ? 'bg-slate-800/60 border-cyan-500/60'
-                        : 'bg-slate-950/60 border-slate-800/80 hover:border-slate-600'
-                    }`}
+                        : 'bg-slate-950/60 border-slate-800/80 hover:border-emerald-500/60'
+                    } ${isPlacingTrade ? 'opacity-70 cursor-wait' : 'active:scale-95'}`}
+                    title={
+                      instantTapDifferBuy
+                        ? `Click to BUY 1 Differ Contract: ≠ Digit ${item.digit} (Stake: $${stake.toFixed(2)})`
+                        : `Select Target Digit ${item.digit}`
+                    }
                   >
                     {/* Current Indicator arrow */}
                     <div className="h-4 flex items-center justify-center">
@@ -979,17 +858,23 @@ export const DerivDigitTrader: React.FC<DerivDigitTraderProps> = ({
                       </div>
                     </div>
 
-                    {/* Digit Bottom Button */}
+                    {/* Digit Bottom Button - Tap acts as Start Button to Buy Differ */}
                     <div
-                      className={`mt-2 w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center font-mono font-black text-sm sm:text-base border transition-all ${
+                      className={`mt-2 w-full py-1 sm:py-1.5 rounded-lg flex flex-col items-center justify-center font-mono transition-all border ${
                         targetDigit === item.digit
                           ? 'bg-emerald-500 text-white border-emerald-400 shadow-md shadow-emerald-500/40'
                           : item.isCurrent
                           ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/50'
-                          : 'bg-slate-900 text-slate-300 border-slate-700 group-hover:border-slate-500'
+                          : 'bg-slate-900 text-slate-300 border-slate-700 group-hover:border-emerald-500/60 group-hover:bg-slate-850'
                       }`}
                     >
-                      {item.digit}
+                      <span className="font-black text-sm sm:text-base leading-none">{item.digit}</span>
+                      {instantTapDifferBuy && (
+                        <span className="text-[8px] uppercase font-black text-emerald-300 leading-none mt-1 flex items-center gap-0.5">
+                          <Zap className="w-2 h-2 text-amber-300 fill-current" />
+                          <span>≠ BUY</span>
+                        </span>
+                      )}
                     </div>
 
                     {/* Max / Min Tag */}
@@ -1112,20 +997,20 @@ export const DerivDigitTrader: React.FC<DerivDigitTraderProps> = ({
                 </div>
               </div>
 
-              {/* Match vs Differ for Target Digit */}
+              {/* Digit Differ Probability for Target Digit */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">Matches / Differs (Target: {targetDigit})</span>
+                  <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">Digit Differ Probability (Target: ≠ {targetDigit})</span>
                   <span className="text-xs font-mono text-emerald-400 font-bold">Diff Payout: +9.8%</span>
                 </div>
                 <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-between">
                   <div>
-                    <div className="text-[10px] text-slate-400 uppercase font-semibold">Differs (≠ {targetDigit})</div>
+                    <div className="text-[10px] text-emerald-400 uppercase font-semibold">Differs (≠ {targetDigit}) [WIN]</div>
                     <div className="text-base font-black font-mono text-emerald-400">{matchDiffStats.diffPct}%</div>
-                    <div className="text-[10px] text-slate-500">{matchDiffStats.diffCount} / {sampleDigits.length} Ticks</div>
+                    <div className="text-[10px] text-slate-400">{matchDiffStats.diffCount} / {sampleDigits.length} Ticks</div>
                   </div>
                   <div className="text-right">
-                    <div className="text-[10px] text-slate-400 uppercase font-semibold">Matches (= {targetDigit})</div>
+                    <div className="text-[10px] text-rose-400 uppercase font-semibold">Target Digit ({targetDigit}) [EXCLUDE]</div>
                     <div className="text-base font-black font-mono text-rose-400">{matchDiffStats.matchPct}%</div>
                     <div className="text-[10px] text-slate-500">{matchDiffStats.matchCount} / {sampleDigits.length} Ticks</div>
                   </div>
@@ -1150,7 +1035,7 @@ export const DerivDigitTrader: React.FC<DerivDigitTraderProps> = ({
               {/* Trade Type Switcher */}
               <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800 overflow-x-auto">
                 {[
-                  { id: 'MATCH_DIFF', label: 'Matches / Differs' },
+                  { id: 'MATCH_DIFF', label: 'Digit Differ (≠)' },
                   { id: 'EVEN_ODD', label: 'Even / Odd' },
                   { id: 'OVER_UNDER', label: 'Over / Under' },
                   { id: 'RISE_FALL', label: 'Rise / Fall' },
@@ -1290,7 +1175,7 @@ export const DerivDigitTrader: React.FC<DerivDigitTraderProps> = ({
               {/* Target / Barrier Digit */}
               {['MATCH_DIFF'].includes(tradeType) && (
                 <div>
-                  <label className="text-xs font-semibold text-slate-400 block mb-1">Prediction Digit (0 - 9)</label>
+                  <label className="text-xs font-semibold text-slate-400 block mb-1">Differ Target Digit (≠ Digit)</label>
                   <select
                     value={targetDigit}
                     onChange={(e) => setTargetDigit(parseInt(e.target.value, 10))}
@@ -1298,7 +1183,7 @@ export const DerivDigitTrader: React.FC<DerivDigitTraderProps> = ({
                   >
                     {new Array(10).fill(0).map((_, d) => (
                       <option key={d} value={d}>
-                        Digit {d} ({digitStats[d]?.percentage || 10}%)
+                        ≠ Differ Digit {d} ({digitStats[d]?.percentage || 10}%)
                       </option>
                     ))}
                   </select>
@@ -1335,50 +1220,33 @@ export const DerivDigitTrader: React.FC<DerivDigitTraderProps> = ({
             {/* Purchase Action Buttons per Contract Type */}
             <div className="pt-2">
               {tradeType === 'MATCH_DIFF' && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {/* DIFFERS BUTTON (Higher Win Probability) */}
+                <div>
+                  {/* SINGLE OPTION: DIGIT DIFFER BUTTON (MATCHES OPTION DELETED) */}
                   <button
                     disabled={isPlacingTrade}
                     onClick={() => handleExecuteTrade('DIGITDIFF')}
-                    className="p-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-[0.99] text-white font-bold transition-all shadow-lg shadow-emerald-500/20 disabled:opacity-50 flex items-center justify-between"
+                    className="w-full p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-500 hover:from-emerald-500 hover:to-teal-400 active:scale-[0.99] text-white font-bold transition-all shadow-xl shadow-emerald-500/25 disabled:opacity-50 flex items-center justify-between border border-emerald-400/40 cursor-pointer"
                   >
-                    <div className="text-left">
-                      <div className="text-base font-black flex items-center gap-1.5">
-                        <span>DIFFERS</span>
-                        <span className="text-xs px-2 py-0.5 bg-emerald-950/80 text-emerald-300 rounded-md font-mono">
-                          ≠ {targetDigit}
-                        </span>
+                    <div className="text-left flex items-center gap-3">
+                      <div className="p-3 rounded-xl bg-slate-950/40 text-emerald-300 border border-emerald-400/30">
+                        <Crosshair className="w-6 h-6 animate-pulse" />
                       </div>
-                      <div className="text-xs text-emerald-100/80 mt-0.5">
-                        Wins if exit digit is not {targetDigit} (Win rate ~90%)
+                      <div>
+                        <div className="text-lg font-black flex items-center gap-2">
+                          <span>BUY DIGIT DIFFER</span>
+                          <span className="text-sm px-2.5 py-0.5 bg-slate-950/90 text-emerald-300 rounded-lg font-mono border border-emerald-400/40">
+                            ≠ Digit {targetDigit}
+                          </span>
+                        </div>
+                        <div className="text-xs text-emerald-100/90 mt-1 font-normal">
+                          Wins if exit digit is NOT {targetDigit} (1-Tick Contract) • Win Probability ~90.9%
+                        </div>
                       </div>
                     </div>
                     <div className="text-right">
-                      <div className="text-xs uppercase font-semibold text-emerald-200">Payout: +9.8%</div>
-                      <div className="text-base font-mono font-black text-white">+${(stake * 0.098).toFixed(2)}</div>
-                    </div>
-                  </button>
-
-                  {/* MATCHES BUTTON (High Payout) */}
-                  <button
-                    disabled={isPlacingTrade}
-                    onClick={() => handleExecuteTrade('DIGITMATCH')}
-                    className="p-4 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 active:scale-[0.99] text-white font-bold transition-all shadow-lg shadow-cyan-500/20 disabled:opacity-50 flex items-center justify-between"
-                  >
-                    <div className="text-left">
-                      <div className="text-base font-black flex items-center gap-1.5">
-                        <span>MATCHES</span>
-                        <span className="text-xs px-2 py-0.5 bg-cyan-950/80 text-cyan-300 rounded-md font-mono">
-                          = {targetDigit}
-                        </span>
-                      </div>
-                      <div className="text-xs text-cyan-100/80 mt-0.5">
-                        Wins if exit digit equals {targetDigit} (Payout ~809%)
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-xs uppercase font-semibold text-cyan-200">Payout: ~809%</div>
-                      <div className="text-base font-mono font-black text-white">+${(stake * 8.09).toFixed(2)}</div>
+                      <div className="text-xs uppercase font-bold text-emerald-200">Payout: +9.8%</div>
+                      <div className="text-xl font-mono font-black text-white">+${(stake * 0.098).toFixed(2)}</div>
+                      <div className="text-[10px] text-emerald-200 font-mono">Total Return: ${(stake * 1.098).toFixed(2)}</div>
                     </div>
                   </button>
                 </div>
@@ -1502,450 +1370,14 @@ export const DerivDigitTrader: React.FC<DerivDigitTraderProps> = ({
         </>
       )}
 
-      {/* 📊 MULTI-MARKET MATRIX SCANNER TAB */}
-      {activeTab === 'matrix' && (
-        <div className="space-y-4">
-          {/* 🤖 Automated 4-Tick Cold Dormancy Matrix Bot */}
-          <MatrixColdestDormancyBotPanel
-            matrixRows={matrixRows}
-            matrixData={matrixData}
-            balanceUsd={balanceUsd}
-            onUpdateBalance={onUpdateBalance}
-            onManualTradeDiffer={handleMatrixTradeColdestDiffer}
-          />
-
-          {/* ⚡ 1-Click Multi-Market Scanner Table / Cards */}
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xl space-y-4">
-            {/* Header & Quick Controls */}
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-3 border-b border-slate-800">
-            <div>
-              <div className="flex items-center gap-2">
-                <Table className="w-5 h-5 text-emerald-400" />
-                <h3 className="text-base font-bold text-white">
-                  Multi-Market Real Digit Matrix (1-Click Coldest Differ Sniper)
-                </h3>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono font-bold border border-emerald-500/40">
-                  LIVE 1-CLICK DIFFER
-                </span>
-              </div>
-              <p className="text-xs text-slate-400 mt-0.5">
-                Real-time frequency & dormancy scanner. Click ANY market row or coldest badge to instantly execute a <strong className="text-emerald-400">Differ</strong> contract on the digit that is currently the coldest recently.
-              </p>
-            </div>
-
-            {/* Quick Stake & Duration Bar */}
-            <div className="flex flex-wrap items-center gap-2.5 bg-slate-950 p-2.5 rounded-xl border border-slate-800">
-              {/* Stake input */}
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs font-semibold text-slate-400">Stake:</span>
-                <div className="relative">
-                  <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500 text-xs font-mono font-bold">$</span>
-                  <input
-                    type="number"
-                    min="0.35"
-                    step="0.5"
-                    value={matrixStake}
-                    onChange={(e) => setMatrixStake(Math.max(0.35, parseFloat(e.target.value) || 0.35))}
-                    className="w-20 bg-slate-900 text-white font-mono font-bold text-xs rounded-lg pl-5 pr-1.5 py-1 border border-slate-700 focus:border-emerald-500 focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              {/* Stake Presets */}
-              <div className="flex items-center gap-1">
-                {[0.35, 1, 2, 5, 10, 50].map((amt) => (
-                  <button
-                    key={amt}
-                    onClick={() => setMatrixStake(amt)}
-                    className={`px-1.5 py-1 rounded text-[10px] font-mono font-bold transition-all ${
-                      matrixStake === amt
-                        ? 'bg-emerald-600 text-white'
-                        : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
-                    }`}
-                  >
-                    ${amt}
-                  </button>
-                ))}
-              </div>
-
-              {/* Duration selector */}
-              <div className="flex items-center gap-1.5 border-l border-slate-800 pl-2">
-                <span className="text-xs font-semibold text-slate-400">Duration:</span>
-                <select
-                  value={matrixDurationTicks}
-                  onChange={(e) => setMatrixDurationTicks(parseInt(e.target.value, 10))}
-                  className="bg-slate-900 text-white font-mono font-bold text-xs rounded-lg px-2 py-1 border border-slate-700 focus:outline-none"
-                >
-                  <option value={1}>1 Tick</option>
-                  <option value={2}>2 Ticks</option>
-                  <option value={3}>3 Ticks</option>
-                  <option value={5}>5 Ticks</option>
-                </select>
-              </div>
-
-              {/* Refresh button */}
-              <button
-                onClick={() => {
-                  matrixRows.forEach((r) => derivWS.requestTicksHistory(r.symbol, 100));
-                }}
-                title="Refresh ticks history"
-                className="p-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          </div>
-
-          {/* 🎯 1-Click Action & Filter Bar */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-3 rounded-xl bg-gradient-to-r from-emerald-950/40 via-teal-950/30 to-slate-950 border border-emerald-500/30">
-            <div className="flex items-center gap-2">
-              <span className="flex h-2.5 w-2.5 relative">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
-              </span>
-              <span className="text-xs font-bold text-emerald-300">
-                ⚡ 1-Click Sniper Active:
-              </span>
-              <span className="text-xs text-slate-300">
-                Click any market row or "Differ Coldest" to instantly place a <strong className="text-white">Differ {matrixDurationTicks}T</strong> contract (Win Rate ~90%, Payout +9.8%).
-              </span>
-            </div>
-
-            {/* Scope Filter & View Mode */}
-            <div className="flex items-center gap-2 self-end sm:self-auto">
-              <div className="flex items-center bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs font-semibold">
-                <button
-                  onClick={() => setMatrixScope('ALL')}
-                  className={`px-2 py-0.5 rounded ${
-                    matrixScope === 'ALL' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  All ({matrixRows.length})
-                </button>
-                <button
-                  onClick={() => setMatrixScope('STANDARD')}
-                  className={`px-2 py-0.5 rounded ${
-                    matrixScope === 'STANDARD' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Standard 10-100
-                </button>
-                <button
-                  onClick={() => setMatrixScope('1S')}
-                  className={`px-2 py-0.5 rounded ${
-                    matrixScope === '1S' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  1-Second
-                </button>
-              </div>
-
-              <div className="flex items-center bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs font-semibold">
-                <button
-                  onClick={() => setMatrixViewMode('table')}
-                  className={`px-2 py-0.5 rounded ${
-                    matrixViewMode === 'table' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Table
-                </button>
-                <button
-                  onClick={() => setMatrixViewMode('cards')}
-                  className={`px-2 py-0.5 rounded ${
-                    matrixViewMode === 'cards' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Cards
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* TABLE VIEW */}
-          {matrixViewMode === 'table' && (
-            <div className="overflow-x-auto rounded-xl border border-slate-800">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-950 text-slate-400 uppercase font-semibold border-b border-slate-800">
-                  <tr>
-                    <th className="py-3 px-3.5">Market</th>
-                    <th className="py-3 px-3.5">Live Spot</th>
-                    <th className="py-3 px-3 text-center">Last Digit</th>
-                    <th className="py-3 px-3.5">Recent Stream (Tape)</th>
-                    <th className="py-3 px-3.5">Hottest Digit</th>
-                    <th className="py-3 px-3.5">
-                      <div className="flex items-center gap-1 text-rose-400">
-                        <Snowflake className="w-3.5 h-3.5" />
-                        <span>Coldest Digit Recently</span>
-                      </div>
-                    </th>
-                    <th className="py-3 px-3.5">Even vs Odd</th>
-                    <th className="py-3 px-3.5 text-right">1-Click Differ Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/60 font-mono">
-                  {filteredMatrixRows.map((row) => {
-                    const isExecuting = executingMatrixSymbol === row.symbol;
-                    const isLastAction = lastMatrixAction?.symbol === row.symbol && Date.now() - lastMatrixAction.time < 3000;
-
-                    return (
-                      <tr
-                        key={row.symbol}
-                        onClick={() => handleMatrixTradeColdestDiffer(row)}
-                        title={`Click to execute DIGITDIFF on coldest digit ${row.coldDigit} for ${row.name}`}
-                        className={`cursor-pointer transition-all duration-200 group select-none ${
-                          isExecuting
-                            ? 'bg-emerald-950/60 ring-2 ring-emerald-400 animate-pulse'
-                            : isLastAction
-                            ? 'bg-emerald-950/40 border-l-4 border-l-emerald-400'
-                            : 'hover:bg-slate-800/60 active:bg-emerald-950/30'
-                        }`}
-                      >
-                        {/* Market Name */}
-                        <td className="py-3 px-3.5 font-bold font-sans text-white">
-                          <div className="flex items-center gap-2">
-                            <span>{row.name}</span>
-                            {row.isOneSecond && (
-                              <span className="text-[9px] px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 font-mono">
-                                1s
-                              </span>
-                            )}
-                          </div>
-                        </td>
-
-                        {/* Current Price */}
-                        <td className="py-3 px-3.5 font-mono">
-                          <div className="flex items-center gap-1.5">
-                            <span className={row.change >= 0 ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
-                              {formatDerivQuote(row.price, row.pipSize, row.symbol)}
-                            </span>
-                            {row.change >= 0 ? (
-                              <ArrowUpRight className="w-3 h-3 text-emerald-400" />
-                            ) : (
-                              <ArrowDownRight className="w-3 h-3 text-rose-400" />
-                            )}
-                          </div>
-                        </td>
-
-                        {/* Last Digit */}
-                        <td className="py-3 px-3 text-center">
-                          <span className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-black text-sm">
-                            {row.lastDigit}
-                          </span>
-                        </td>
-
-                        {/* Recent Digits Tape */}
-                        <td className="py-3 px-3.5">
-                          <div className="flex items-center gap-1 font-mono text-[11px]">
-                            {row.recentDigits.length > 0 ? (
-                              row.recentDigits.map((d, idx, arr) => {
-                                const isLast = idx === arr.length - 1;
-                                const isCold = d === row.coldDigit;
-                                return (
-                                  <span
-                                    key={idx}
-                                    className={`w-5 h-5 rounded flex items-center justify-center font-bold text-[10px] ${
-                                      isLast
-                                        ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-400/50'
-                                        : isCold
-                                        ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
-                                        : 'bg-slate-800 text-slate-400'
-                                    }`}
-                                  >
-                                    {d}
-                                  </span>
-                                );
-                              })
-                            ) : (
-                              <span className="text-slate-500 text-[10px]">Loading...</span>
-                            )}
-                          </div>
-                        </td>
-
-                        {/* Hottest Digit */}
-                        <td className="py-3 px-3.5">
-                          <span className="inline-flex items-center gap-1 text-emerald-400 font-bold">
-                            <Flame className="w-3.5 h-3.5 text-orange-400" />
-                            <span>Digit {row.hotDigit} ({row.hotPct}%)</span>
-                          </span>
-                        </td>
-
-                        {/* Coldest Digit Recently (The Primary Sniper Target) */}
-                        <td className="py-3 px-3.5">
-                          <div className="flex items-center gap-2">
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-rose-500/20 border border-rose-500/50 text-rose-300 font-black text-xs shadow-sm">
-                              <Snowflake className="w-3.5 h-3.5 text-cyan-300" />
-                              <span>Digit {row.coldDigit}</span>
-                              <span className="text-[10px] text-rose-200 font-normal">({row.coldPct}%)</span>
-                            </span>
-
-                            <div className="flex flex-col text-[10px] font-sans">
-                              <span className="text-slate-400 font-mono">
-                                {row.coldDormancy}t dormant
-                              </span>
-                              {row.isSuperCold && (
-                                <span className="text-[9px] text-amber-300 font-bold uppercase">
-                                  ★ Super Cold
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </td>
-
-                        {/* Even vs Odd */}
-                        <td className="py-3 px-3.5">
-                          <div className="flex items-center gap-1.5 text-[11px]">
-                            <span className="text-blue-400 font-bold">E:{row.evenPct}%</span>
-                            <span className="text-slate-600">/</span>
-                            <span className="text-amber-400 font-bold">O:{row.oddPct}%</span>
-                          </div>
-                        </td>
-
-                        {/* Action Column */}
-                        <td className="py-3 px-3.5 text-right" onClick={(e) => e.stopPropagation()}>
-                          <div className="flex items-center justify-end gap-2">
-                            <button
-                              disabled={isPlacingTrade}
-                              onClick={() => handleMatrixTradeColdestDiffer(row)}
-                              className={`px-3 py-1.5 rounded-xl font-sans text-xs font-black transition-all flex items-center gap-1.5 shadow-md ${
-                                isExecuting
-                                  ? 'bg-emerald-400 text-slate-950 animate-bounce'
-                                  : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-emerald-600/20 active:scale-95'
-                              }`}
-                            >
-                              <Zap className="w-3.5 h-3.5" />
-                              <span>Differ {row.coldDigit}</span>
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950/60 text-emerald-300 font-mono">
-                                +${(matrixStake * 0.098).toFixed(2)}
-                              </span>
-                            </button>
-
-                            <button
-                              onClick={() => {
-                                setSelectedSymbol(row.symbol);
-                                setActiveTab('trader');
-                                soundManager.playButtonClick();
-                              }}
-                              title="Inspect chart in Manual Trader"
-                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
-                            >
-                              <Eye className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {/* CARDS / GRID VIEW */}
-          {matrixViewMode === 'cards' && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-              {filteredMatrixRows.map((row) => {
-                const isExecuting = executingMatrixSymbol === row.symbol;
-                const isLastAction = lastMatrixAction?.symbol === row.symbol && Date.now() - lastMatrixAction.time < 3000;
-
-                return (
-                  <div
-                    key={row.symbol}
-                    onClick={() => handleMatrixTradeColdestDiffer(row)}
-                    className={`p-4 rounded-2xl border bg-slate-900/90 shadow-xl flex flex-col justify-between transition-all cursor-pointer select-none ${
-                      isExecuting
-                        ? 'border-emerald-400 ring-2 ring-emerald-400 bg-emerald-950/30 animate-pulse'
-                        : isLastAction
-                        ? 'border-emerald-500 bg-emerald-950/20'
-                        : 'border-slate-800 hover:border-emerald-500/50 hover:bg-slate-850'
-                    }`}
-                  >
-                    <div>
-                      {/* Top Header */}
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-bold text-white text-sm">{row.name}</span>
-                            {row.isOneSecond && (
-                              <span className="text-[9px] px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 font-mono">
-                                1s
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-xs text-slate-400 font-mono mt-0.5 flex items-center gap-2">
-                            <span>Spot: {formatDerivQuote(row.price, row.pipSize, row.symbol)}</span>
-                            <span>•</span>
-                            <span>Last: <strong className="text-cyan-400">{row.lastDigit}</strong></span>
-                          </div>
-                        </div>
-
-                        {/* Coldest Badge */}
-                        <div className="px-2.5 py-1 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-300 font-mono text-xs font-black flex items-center gap-1">
-                          <Snowflake className="w-3.5 h-3.5 text-cyan-300" />
-                          <span>Cold: {row.coldDigit} ({row.coldPct}%)</span>
-                        </div>
-                      </div>
-
-                      {/* Mini Digit Stream Tape */}
-                      <div className="mt-3 p-2 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-between">
-                        <span className="text-[10px] text-slate-400 font-bold uppercase">Stream:</span>
-                        <div className="flex items-center gap-1 font-mono text-xs">
-                          {row.recentDigits.map((d, idx, arr) => (
-                            <span
-                              key={idx}
-                              className={`w-6 h-6 rounded flex items-center justify-center font-bold text-[11px] ${
-                                idx === arr.length - 1
-                                  ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-400'
-                                  : d === row.coldDigit
-                                  ? 'bg-rose-500/30 text-rose-300 border border-rose-500'
-                                  : 'bg-slate-800 text-slate-400'
-                              }`}
-                            >
-                              {d}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Coldness metrics */}
-                      <div className="mt-2.5 grid grid-cols-3 gap-2 bg-slate-950/80 p-2 rounded-xl border border-slate-800/80 text-[11px] font-mono">
-                        <div>
-                          <span className="text-slate-500 text-[10px]">Coldest Digit:</span>
-                          <div className="font-bold text-rose-300">Digit {row.coldDigit}</div>
-                        </div>
-                        <div>
-                          <span className="text-slate-500 text-[10px]">Frequency:</span>
-                          <div className="font-bold text-slate-300">{row.coldPct}% ({row.coldCount}t)</div>
-                        </div>
-                        <div>
-                          <span className="text-slate-500 text-[10px]">Dormancy:</span>
-                          <div className="font-bold text-amber-300">{row.coldDormancy} ticks</div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Big Action Button */}
-                    <div className="mt-3 pt-2.5 border-t border-slate-800" onClick={(e) => e.stopPropagation()}>
-                      <button
-                        disabled={isPlacingTrade}
-                        onClick={() => handleMatrixTradeColdestDiffer(row)}
-                        className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs transition-all shadow-lg shadow-emerald-600/20 flex items-center justify-between active:scale-[0.99]"
-                      >
-                        <div className="flex items-center gap-1.5">
-                          <Zap className="w-4 h-4" />
-                          <span>DIFFER COLDEST (≠ {row.coldDigit})</span>
-                        </div>
-                        <span className="font-mono text-xs px-2 py-0.5 rounded-lg bg-emerald-950/80 text-emerald-300 border border-emerald-800">
-                          Stake ${matrixStake.toFixed(2)} ➔ +${(matrixStake * 0.098).toFixed(2)}
-                        </span>
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
+      {/* 🎯 DIGIT SELECT DIFFER BOT PANEL (SYNCED WITH TOP LIVE FEED & VIRTUAL MODE) */}
+      {activeTab === 'digit_select_differ' && (
+        <DigitSelectDifferBotPanel
+          balanceUsd={balanceUsd}
+          onUpdateBalance={onUpdateBalance}
+          activeMarketSymbol={selectedSymbol}
+          onSelectMarket={(sym) => setSelectedSymbol(sym)}
+        />
       )}
 
       {/* 📜 SETTLED TRADE HISTORY TAB */}

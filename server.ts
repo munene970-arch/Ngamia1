@@ -3,8 +3,16 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
+import { systemAutoLiveRunner } from "./server/systemAutoLiveRunner";
 
 dotenv.config();
+
+process.on("uncaughtException", (err) => {
+  console.error("[Server] Uncaught Exception:", err);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[Server] Unhandled Rejection:", reason);
+});
 
 const app = express();
 const PORT = 3000;
@@ -258,6 +266,7 @@ async function handleDerivOtp(req: express.Request, res: express.Response) {
               Authorization: `Bearer ${token}`,
               Accept: 'application/json',
             },
+            signal: AbortSignal.timeout(1500),
           });
           const text = await resp.text();
           let data: unknown = text;
@@ -278,10 +287,13 @@ async function handleDerivOtp(req: express.Request, res: express.Response) {
       }
     }
 
+    const socketAppId = appId || '34O00AdC2O6jw2JRyd0WG';
+    const wsTransportAppId = /^\d+$/.test(socketAppId) ? socketAppId : '1089';
+
     if (!accountId) {
       // Fallback: If discovery fails or legacy token, fallback to standard Deriv WS URL
       return res.json({
-        url: `wss://ws.derivws.com/websockets/v3?app_id=${encodeURIComponent(appId)}`,
+        url: `wss://ws.derivws.com/websockets/v3?app_id=${encodeURIComponent(wsTransportAppId)}`,
         accountId: '',
         hint: 'Fallback standard WebSocket connection',
       });
@@ -305,7 +317,7 @@ async function handleDerivOtp(req: express.Request, res: express.Response) {
     if (!otpResponse.ok) {
       // Fallback to legacy endpoint if OTP endpoint not supported for account
       return res.json({
-        url: `wss://ws.derivws.com/websockets/v3?app_id=${encodeURIComponent(appId)}`,
+        url: `wss://ws.derivws.com/websockets/v3?app_id=${encodeURIComponent(socketAppId)}`,
         accountId,
       });
     }
@@ -313,7 +325,7 @@ async function handleDerivOtp(req: express.Request, res: express.Response) {
     const wsUrl = findWebSocketUrl(parsed);
     if (!wsUrl) {
       return res.json({
-        url: `wss://ws.derivws.com/websockets/v3?app_id=${encodeURIComponent(appId)}`,
+        url: `wss://ws.derivws.com/websockets/v3?app_id=${encodeURIComponent(socketAppId)}`,
         accountId,
       });
     }
@@ -493,6 +505,89 @@ Respond ONLY with valid JSON.
   }
 });
 
+// ==========================================
+// 🚀 System Auto Live Background Bot Endpoints
+// ==========================================
+
+// Get real-time status of 24/7 background runner
+app.get("/api/system-auto-live/status", (req, res) => {
+  try {
+    const status = systemAutoLiveRunner.getStatus();
+    res.json({ success: true, data: status });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || "Failed to get live status" });
+  }
+});
+
+// Get trade history of 24/7 background runner
+app.get("/api/system-auto-live/history", (req, res) => {
+  try {
+    const history = systemAutoLiveRunner.getHistory();
+    res.json({ success: true, data: history });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || "Failed to get history" });
+  }
+});
+
+// Start the 24/7 background runner
+app.post("/api/system-auto-live/start", (req, res) => {
+  try {
+    const config = req.body || {};
+    systemAutoLiveRunner.start(config);
+    res.json({
+      success: true,
+      message: "System Auto Live bot started in background",
+      data: systemAutoLiveRunner.getStatus(),
+    });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message || "Failed to start live bot" });
+  }
+});
+
+// Stop the 24/7 background runner
+app.post("/api/system-auto-live/stop", (req, res) => {
+  try {
+    const { reason } = req.body || {};
+    systemAutoLiveRunner.stop(reason || "User requested stop via panel");
+    res.json({
+      success: true,
+      message: "System Auto Live bot stopped",
+      data: systemAutoLiveRunner.getStatus(),
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || "Failed to stop live bot" });
+  }
+});
+
+// Update configuration
+app.post("/api/system-auto-live/config", (req, res) => {
+  try {
+    const config = req.body || {};
+    systemAutoLiveRunner.updateConfig(config);
+    res.json({
+      success: true,
+      message: "System Auto Live configuration updated",
+      data: systemAutoLiveRunner.getStatus(),
+    });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message || "Failed to update config" });
+  }
+});
+
+// Reset metrics and trade history
+app.post("/api/system-auto-live/reset", (req, res) => {
+  try {
+    systemAutoLiveRunner.resetStats();
+    res.json({
+      success: true,
+      message: "System Auto Live stats reset",
+      data: systemAutoLiveRunner.getStatus(),
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || "Failed to reset stats" });
+  }
+});
+
 // Vite Development or Production Static middleware
 async function setupViteOrStatic() {
   if (process.env.NODE_ENV !== "production") {
@@ -514,4 +609,6 @@ async function setupViteOrStatic() {
   });
 }
 
-setupViteOrStatic();
+setupViteOrStatic().catch((err) => {
+  console.error("[Server] Fatal error initializing server:", err);
+});

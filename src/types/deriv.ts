@@ -1,6 +1,6 @@
 export type MarketSymbol = 
   | 'R_10' | 'R_25' | 'R_50' | 'R_75' | 'R_100'
-  | '1HZ10V' | '1HZ25V' | '1HZ50V' | '1HZ75V' | '1HZ100V' | '1HZ150V' | '1HZ250V'
+  | '1HZ10V' | '1HZ15V' | '1HZ25V' | '1HZ30V' | '1HZ50V' | '1HZ75V' | '1HZ90V' | '1HZ100V'
   | 'CRASH1000' | 'CRASH500' | 'CRASH300' | 'BOOM1000' | 'BOOM500' | 'BOOM300'
   | 'STEPINDEX' | 'JUMP10' | 'JUMP25' | 'JUMP50' | 'JUMP75' | 'JUMP100'
   | 'RDBEAR' | 'RDBULL';
@@ -44,7 +44,7 @@ export interface ActiveContract {
   entrySpot: number;
   entrySpotDisplay?: string;
   currentSpot: number;
-  barrier?: number;
+  barrier?: number | string;
   targetDigit?: number;
   multiplier?: number;
   growthRate?: number;
@@ -66,6 +66,11 @@ export interface ActiveContract {
   exitDigit?: number;
   pipSize?: number;
   historySpots: number[];
+  isGhostTrade?: boolean;
+  isShieldedReal?: boolean;
+  jitterAppliedMs?: number;
+  isVirtual?: boolean;
+  accountType?: 'DEMO' | 'REAL';
 }
 
 export type DBotIndicatorTrigger =

@@ -128,9 +128,22 @@ export const AiScannerBotPanel: React.FC<AiScannerBotPanelProps> = ({
     }
   };
 
-  // Compounding Quick Presets
+  // Betting Strategy Presets
   const applyPreset = (
-    preset: 'FULL_MARGIN' | 'COMPOUND_100' | 'COMPOUND_STEPS_3' | 'COMPOUND_50' | 'BALANCE_2PCT' | 'MARTINGALE' | 'FLAT'
+    preset:
+      | 'FULL_MARGIN'
+      | 'COMPOUND_100'
+      | 'COMPOUND_STEPS_3'
+      | 'COMPOUND_50'
+      | 'BALANCE_2PCT'
+      | 'MARTINGALE'
+      | 'DALEMBERT'
+      | 'REVERSE_DALEMBERT'
+      | 'FIBONACCI'
+      | 'PAROLI'
+      | 'OSCARS_GRIND'
+      | 'KELLY_CRITERION'
+      | 'FLAT'
   ) => {
     if (status.isRunning) return;
     soundManager.playButtonClick();
@@ -183,6 +196,42 @@ export const AiScannerBotPanel: React.FC<AiScannerBotPanelProps> = ({
         stakeMode: 'MARTINGALE',
         martingaleMultiplier: 11.0,
         maxMartingaleSteps: 2,
+        continuousTrading: true,
+      });
+    } else if (preset === 'DALEMBERT') {
+      handleConfigChange({
+        stakeMode: 'DALEMBERT',
+        dalembertStep: 0.35,
+        continuousTrading: true,
+      });
+    } else if (preset === 'REVERSE_DALEMBERT') {
+      handleConfigChange({
+        stakeMode: 'REVERSE_DALEMBERT',
+        dalembertStep: 0.35,
+        continuousTrading: true,
+      });
+    } else if (preset === 'FIBONACCI') {
+      handleConfigChange({
+        stakeMode: 'FIBONACCI',
+        continuousTrading: true,
+      });
+    } else if (preset === 'PAROLI') {
+      handleConfigChange({
+        stakeMode: 'PAROLI',
+        paroliConsecutiveTarget: 3,
+        paroliMultiplier: 2.0,
+        continuousTrading: true,
+      });
+    } else if (preset === 'OSCARS_GRIND') {
+      handleConfigChange({
+        stakeMode: 'OSCARS_GRIND',
+        oscarsTargetUnit: 1,
+        continuousTrading: true,
+      });
+    } else if (preset === 'KELLY_CRITERION') {
+      handleConfigChange({
+        stakeMode: 'KELLY_CRITERION',
+        kellyFraction: 0.25,
         continuousTrading: true,
       });
     } else if (preset === 'FLAT') {
@@ -269,7 +318,7 @@ export const AiScannerBotPanel: React.FC<AiScannerBotPanelProps> = ({
         </div>
 
         {/* 🧭 Strategy Settings & Execution Mode Switchers */}
-        <div className="mt-4 pt-3 border-t border-slate-800/80 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className="mt-4 pt-3 border-t border-slate-800/80 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
           {/* 1. Streak Trigger Criteria */}
           <div className="bg-slate-950 p-2 rounded-xl border border-slate-800 flex items-center justify-between">
             <span className="text-[11px] font-bold text-slate-400 px-1 flex items-center gap-1.5">
@@ -316,10 +365,34 @@ export const AiScannerBotPanel: React.FC<AiScannerBotPanelProps> = ({
               onChange={(e) => handleConfigChange({ marketScope: e.target.value as ScannerMarketScope })}
               className="bg-slate-900 text-cyan-300 font-bold text-xs rounded-lg px-2.5 py-1 border border-slate-700 focus:outline-none"
             >
-              <option value="COMBINED_ALL">Combined (10 to 100 + 1s)</option>
+              <option value="COMBINED_ALL">All Markets (10 to 100 + 1s)</option>
               <option value="STANDARD_10_TO_100">Standard Vol 10 to 100</option>
               <option value="ONESECOND_10_TO_100">1-Second Vol 10 to 100</option>
-              <option value="ALL_PLUS_HIGH_VOL">All + High Vol (150/250 1s)</option>
+            </select>
+          </div>
+
+          {/* 4. Betting Strategy */}
+          <div className="bg-slate-950 p-2 rounded-xl border border-slate-800 flex items-center justify-between">
+            <span className="text-[11px] font-bold text-slate-400 px-1 flex items-center gap-1.5">
+              <Coins className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Betting Strategy:</span>
+            </span>
+            <select
+              value={config.stakeMode}
+              onChange={(e) => handleConfigChange({ stakeMode: e.target.value as ScannerStakeMode })}
+              className="bg-slate-900 text-emerald-300 font-bold text-xs rounded-lg px-2.5 py-1 border border-slate-700 focus:outline-none"
+            >
+              <option value="COMPOUND">🔄 100% Compounding</option>
+              <option value="COMPOUND_STEPS">🎯 3-Step Compound</option>
+              <option value="BALANCE_PERCENT">📊 Balance % Staking</option>
+              <option value="MARTINGALE">🛡️ Martingale (11x)</option>
+              <option value="DALEMBERT">📈 D'Alembert (+/- Step)</option>
+              <option value="REVERSE_DALEMBERT">📉 Contra-D'Alembert</option>
+              <option value="FIBONACCI">🔢 Fibonacci Sequence</option>
+              <option value="PAROLI">🚀 Paroli (Streak Doubler)</option>
+              <option value="OSCARS_GRIND">🎯 Oscar's Grind</option>
+              <option value="KELLY_CRITERION">🧠 Kelly Criterion</option>
+              <option value="FLAT">⏹️ Flat Stake</option>
             </select>
           </div>
         </div>
@@ -393,8 +466,17 @@ export const AiScannerBotPanel: React.FC<AiScannerBotPanelProps> = ({
           <div className="text-lg sm:text-xl font-black font-mono text-white mt-1">
             ${status.currentStake.toFixed(2)}
           </div>
-          <div className="text-[10px] text-slate-500 font-mono mt-0.5">
-            Mode: {config.stakeMode}
+          <div className="text-[10px] text-slate-400 font-mono mt-0.5 truncate">
+            {config.stakeMode === 'COMPOUND' ? '100% Compound' :
+             config.stakeMode === 'COMPOUND_STEPS' ? `${config.compoundMaxSteps}-Step Compound` :
+             config.stakeMode === 'BALANCE_PERCENT' ? `${config.compoundBalancePct}% Balance` :
+             config.stakeMode === 'MARTINGALE' ? `${config.martingaleMultiplier}x Martingale` :
+             config.stakeMode === 'DALEMBERT' ? 'D\'Alembert' :
+             config.stakeMode === 'REVERSE_DALEMBERT' ? 'Contra-D\'Alembert' :
+             config.stakeMode === 'FIBONACCI' ? 'Fibonacci' :
+             config.stakeMode === 'PAROLI' ? 'Paroli Streak' :
+             config.stakeMode === 'OSCARS_GRIND' ? 'Oscar\'s Grind' :
+             config.stakeMode === 'KELLY_CRITERION' ? 'Kelly Criterion' : 'Flat Stake'}
           </div>
         </div>
 
@@ -885,21 +967,34 @@ export const AiScannerBotPanel: React.FC<AiScannerBotPanelProps> = ({
 
           {/* Quick Preset Buttons */}
           <div>
-            <label className="text-xs font-semibold text-slate-300 mb-2 block">Quick Money Management Presets</label>
+            <label className="text-xs font-semibold text-slate-300 mb-2 block flex items-center justify-between">
+              <span>Quick Betting & Money Management Presets</span>
+              <span className="text-[10px] text-emerald-400 font-mono">13 Battle-Tested Models</span>
+            </label>
             <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
               {[
-                { id: 'FULL_MARGIN', label: '⚡ Full Margin (100%)', desc: 'All-in balance compound' },
+                { id: 'FULL_MARGIN', label: '⚡ Full Margin', desc: '100% all-in reinvest' },
                 { id: 'COMPOUND_100', label: '🔄 100% Compound', desc: 'Reinvest all profit' },
-                { id: 'COMPOUND_STEPS_3', label: '🎯 3-Step Compound', desc: 'Compound 3 wins & bank' },
+                { id: 'COMPOUND_STEPS_3', label: '🎯 3-Step Bank', desc: 'Compound 3 wins & bank' },
                 { id: 'COMPOUND_50', label: '⚖️ 50% Compound', desc: 'Reinvest half profit' },
-                { id: 'BALANCE_2PCT', label: '📊 2% Balance Stake', desc: 'Dynamic portfolio risk' },
+                { id: 'BALANCE_2PCT', label: '📊 2% Balance', desc: 'Dynamic balance stake' },
                 { id: 'MARTINGALE', label: '🛡️ 11x Martingale', desc: 'Differ loss recovery' },
-                { id: 'FLAT', label: '⏹️ Flat Stake', desc: 'Constant base stake' },
+                { id: 'DALEMBERT', label: '📈 D\'Alembert', desc: '+1 on loss, -1 on win' },
+                { id: 'REVERSE_DALEMBERT', label: '📉 Contra-D\'Alembert', desc: '+1 on win, -1 on loss' },
+                { id: 'FIBONACCI', label: '🔢 Fibonacci', desc: '1, 1, 2, 3, 5, 8, 13...' },
+                { id: 'PAROLI', label: '🚀 Paroli Streak', desc: '2x on win up to 3 streak' },
+                { id: 'OSCARS_GRIND', label: '🎯 Oscar\'s Grind', desc: '+1 unit target cycle' },
+                { id: 'KELLY_CRITERION', label: '🧠 Kelly Criterion', desc: 'Optimal mathematical edge' },
+                { id: 'FLAT', label: '⏹️ Flat Stake', desc: 'Fixed base stake' },
               ].map((p) => (
                 <button
                   key={p.id}
                   onClick={() => applyPreset(p.id as any)}
-                  className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 hover:border-emerald-500/50 text-left transition-all group"
+                  className={`p-2.5 rounded-xl border text-left transition-all group ${
+                    config.stakeMode === p.id
+                      ? 'bg-emerald-950/40 border-emerald-500 shadow-md shadow-emerald-500/20 ring-1 ring-emerald-400'
+                      : 'bg-slate-950 border-slate-800 hover:border-emerald-500/50'
+                  }`}
                 >
                   <div className="text-xs font-bold text-white group-hover:text-emerald-400 transition-colors">{p.label}</div>
                   <div className="text-[10px] text-slate-500 mt-0.5">{p.desc}</div>
@@ -908,8 +1003,35 @@ export const AiScannerBotPanel: React.FC<AiScannerBotPanelProps> = ({
             </div>
           </div>
 
+          {/* Detailed Strategy Description & Formula Banner */}
+          <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800/80 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+            <div className="space-y-0.5">
+              <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Active Betting Strategy Engine</span>
+              <div className="text-sm font-bold text-emerald-400 flex items-center gap-2">
+                <span>
+                  {config.stakeMode === 'COMPOUND' && config.compoundReinvestPct === 100 && '🔄 100% Profit Compounding (Exponential Reinvestment)'}
+                  {config.stakeMode === 'COMPOUND' && config.compoundReinvestPct === 50 && '⚖️ 50% Conservative Compound (Half Reinvest)'}
+                  {config.stakeMode === 'COMPOUND' && config.compoundReinvestPct !== 100 && config.compoundReinvestPct !== 50 && `🔄 ${config.compoundReinvestPct}% Profit Compounding`}
+                  {config.stakeMode === 'COMPOUND_STEPS' && `🎯 ${config.compoundMaxSteps}-Step Compound & Bank Cycle`}
+                  {config.stakeMode === 'BALANCE_PERCENT' && `📊 ${config.compoundBalancePct}% Dynamic Account Balance Sizing`}
+                  {config.stakeMode === 'MARTINGALE' && `🛡️ ${config.martingaleMultiplier}x Martingale Loss Multiplier`}
+                  {config.stakeMode === 'DALEMBERT' && '📈 D\'Alembert (+1 Step on Loss, -1 Step on Win)'}
+                  {config.stakeMode === 'REVERSE_DALEMBERT' && '📉 Contra-D\'Alembert (+1 Step on Win, -1 Step on Loss)'}
+                  {config.stakeMode === 'FIBONACCI' && '🔢 Fibonacci Progression (Step Up on Loss, -2 Steps on Win)'}
+                  {config.stakeMode === 'PAROLI' && `🚀 Paroli Anti-Martingale (${config.paroliMultiplier}x on Win up to ${config.paroliConsecutiveTarget} Streak)`}
+                  {config.stakeMode === 'OSCARS_GRIND' && `🎯 Oscar\'s Grind (+${config.oscarsTargetUnit} Unit Profit Goal per Cycle)`}
+                  {config.stakeMode === 'KELLY_CRITERION' && `🧠 Kelly Criterion (${((config.kellyFraction || 0.25) * 100).toFixed(0)}% Fractional Edge Sizing)`}
+                  {config.stakeMode === 'FLAT' && '⏹️ Flat Staking (Fixed Base Stake on Every Contract)'}
+                </span>
+              </div>
+            </div>
+            <div className="font-mono text-[11px] text-slate-400">
+              Current Stake: <strong className="text-white text-xs">${status.currentStake.toFixed(2)}</strong> | Base: <strong className="text-emerald-400 text-xs">${config.baseStake.toFixed(2)}</strong>
+            </div>
+          </div>
+
           {/* Detailed Inputs */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2 border-t border-slate-800/80">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-2 border-t border-slate-800/80">
             {/* Base Stake */}
             <div>
               <label className="text-xs font-semibold text-slate-300 mb-1 block">Base Stake (USD)</label>
@@ -926,18 +1048,142 @@ export const AiScannerBotPanel: React.FC<AiScannerBotPanelProps> = ({
               </div>
             </div>
 
-            {/* Compounding Reinvest % */}
-            <div>
-              <label className="text-xs font-semibold text-slate-300 mb-1 block">Profit Reinvestment (%)</label>
-              <input
-                type="number"
-                min="0"
-                max="100"
-                value={config.compoundReinvestPct}
-                onChange={(e) => handleConfigChange({ compoundReinvestPct: Math.min(100, Math.max(0, parseInt(e.target.value) || 0)) })}
-                className="w-full bg-slate-950 text-white font-mono font-bold text-sm rounded-xl px-3 py-2 border border-slate-800 focus:border-emerald-500 focus:outline-none"
-              />
-            </div>
+            {/* Strategy Dynamic Parameter: Compounding Reinvest % */}
+            {(config.stakeMode === 'COMPOUND' || config.stakeMode === 'COMPOUND_STEPS') && (
+              <div>
+                <label className="text-xs font-semibold text-slate-300 mb-1 block">Profit Reinvestment (%)</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="100"
+                  value={config.compoundReinvestPct}
+                  onChange={(e) => handleConfigChange({ compoundReinvestPct: Math.min(100, Math.max(1, parseInt(e.target.value) || 100)) })}
+                  className="w-full bg-slate-950 text-white font-mono font-bold text-sm rounded-xl px-3 py-2 border border-slate-800 focus:border-emerald-500 focus:outline-none"
+                />
+              </div>
+            )}
+
+            {/* Strategy Dynamic Parameter: Compound Max Steps */}
+            {config.stakeMode === 'COMPOUND_STEPS' && (
+              <div>
+                <label className="text-xs font-semibold text-slate-300 mb-1 block">Compound Max Steps (Bank Cycle)</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="10"
+                  value={config.compoundMaxSteps}
+                  onChange={(e) => handleConfigChange({ compoundMaxSteps: Math.max(1, parseInt(e.target.value) || 3) })}
+                  className="w-full bg-slate-950 text-white font-mono font-bold text-sm rounded-xl px-3 py-2 border border-slate-800 focus:border-emerald-500 focus:outline-none"
+                />
+              </div>
+            )}
+
+            {/* Strategy Dynamic Parameter: Balance % */}
+            {config.stakeMode === 'BALANCE_PERCENT' && (
+              <div>
+                <label className="text-xs font-semibold text-slate-300 mb-1 block">Balance Stake (%)</label>
+                <input
+                  type="number"
+                  step="0.5"
+                  min="0.5"
+                  max="50"
+                  value={config.compoundBalancePct}
+                  onChange={(e) => handleConfigChange({ compoundBalancePct: Math.max(0.5, parseFloat(e.target.value) || 2.0) })}
+                  className="w-full bg-slate-950 text-white font-mono font-bold text-sm rounded-xl px-3 py-2 border border-slate-800 focus:border-emerald-500 focus:outline-none"
+                />
+              </div>
+            )}
+
+            {/* Strategy Dynamic Parameter: Martingale Multiplier */}
+            {config.stakeMode === 'MARTINGALE' && (
+              <div>
+                <label className="text-xs font-semibold text-slate-300 mb-1 block">Martingale Multiplier (x)</label>
+                <input
+                  type="number"
+                  step="0.5"
+                  min="2"
+                  max="20"
+                  value={config.martingaleMultiplier}
+                  onChange={(e) => handleConfigChange({ martingaleMultiplier: Math.max(2, parseFloat(e.target.value) || 11.0) })}
+                  className="w-full bg-slate-950 text-white font-mono font-bold text-sm rounded-xl px-3 py-2 border border-slate-800 focus:border-emerald-500 focus:outline-none"
+                />
+              </div>
+            )}
+
+            {/* Strategy Dynamic Parameter: D'Alembert Step */}
+            {(config.stakeMode === 'DALEMBERT' || config.stakeMode === 'REVERSE_DALEMBERT') && (
+              <div>
+                <label className="text-xs font-semibold text-slate-300 mb-1 block">D'Alembert Step Size ($)</label>
+                <input
+                  type="number"
+                  step="0.05"
+                  min="0.10"
+                  value={config.dalembertStep || 0.35}
+                  onChange={(e) => handleConfigChange({ dalembertStep: Math.max(0.10, parseFloat(e.target.value) || 0.35) })}
+                  className="w-full bg-slate-950 text-white font-mono font-bold text-sm rounded-xl px-3 py-2 border border-slate-800 focus:border-emerald-500 focus:outline-none"
+                />
+              </div>
+            )}
+
+            {/* Strategy Dynamic Parameter: Paroli Streak Target */}
+            {config.stakeMode === 'PAROLI' && (
+              <>
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 mb-1 block">Paroli Win Streak Target</label>
+                  <input
+                    type="number"
+                    min="2"
+                    max="6"
+                    value={config.paroliConsecutiveTarget || 3}
+                    onChange={(e) => handleConfigChange({ paroliConsecutiveTarget: Math.max(2, parseInt(e.target.value) || 3) })}
+                    className="w-full bg-slate-950 text-white font-mono font-bold text-sm rounded-xl px-3 py-2 border border-slate-800 focus:border-emerald-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 mb-1 block">Paroli Multiplier on Win (x)</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="1.5"
+                    max="4.0"
+                    value={config.paroliMultiplier || 2.0}
+                    onChange={(e) => handleConfigChange({ paroliMultiplier: Math.max(1.5, parseFloat(e.target.value) || 2.0) })}
+                    className="w-full bg-slate-950 text-white font-mono font-bold text-sm rounded-xl px-3 py-2 border border-slate-800 focus:border-emerald-500 focus:outline-none"
+                  />
+                </div>
+              </>
+            )}
+
+            {/* Strategy Dynamic Parameter: Kelly Criterion Fraction */}
+            {config.stakeMode === 'KELLY_CRITERION' && (
+              <div>
+                <label className="text-xs font-semibold text-slate-300 mb-1 block">Fractional Kelly Sizing (0.10 - 1.0)</label>
+                <input
+                  type="number"
+                  step="0.05"
+                  min="0.05"
+                  max="1.0"
+                  value={config.kellyFraction || 0.25}
+                  onChange={(e) => handleConfigChange({ kellyFraction: Math.min(1.0, Math.max(0.05, parseFloat(e.target.value) || 0.25)) })}
+                  className="w-full bg-slate-950 text-white font-mono font-bold text-sm rounded-xl px-3 py-2 border border-slate-800 focus:border-emerald-500 focus:outline-none"
+                />
+              </div>
+            )}
+
+            {/* Strategy Dynamic Parameter: Oscar's Grind Goal */}
+            {config.stakeMode === 'OSCARS_GRIND' && (
+              <div>
+                <label className="text-xs font-semibold text-slate-300 mb-1 block">Oscar's Cycle Profit Target (Units)</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="5"
+                  value={config.oscarsTargetUnit || 1}
+                  onChange={(e) => handleConfigChange({ oscarsTargetUnit: Math.max(1, parseInt(e.target.value) || 1) })}
+                  className="w-full bg-slate-950 text-white font-mono font-bold text-sm rounded-xl px-3 py-2 border border-slate-800 focus:border-emerald-500 focus:outline-none"
+                />
+              </div>
+            )}
 
             {/* Max Stake Safety Cap */}
             <div>
@@ -966,7 +1212,7 @@ export const AiScannerBotPanel: React.FC<AiScannerBotPanelProps> = ({
 
             {/* Max Consecutive Losses Breaker */}
             <div>
-              <label className="text-xs font-semibold text-slate-300 mb-1 block">Streak Safety Stop (Consecutive Losses)</label>
+              <label className="text-xs font-semibold text-slate-300 mb-1 block">Streak Safety Stop (Max Losses)</label>
               <input
                 type="number"
                 min="0"
@@ -986,6 +1232,32 @@ export const AiScannerBotPanel: React.FC<AiScannerBotPanelProps> = ({
                 step="100"
                 value={config.delayBetweenTradesMs}
                 onChange={(e) => handleConfigChange({ delayBetweenTradesMs: Math.max(200, parseInt(e.target.value) || 400) })}
+                className="w-full bg-slate-950 text-white font-mono font-bold text-sm rounded-xl px-3 py-2 border border-slate-800 focus:border-emerald-500 focus:outline-none"
+              />
+            </div>
+
+            {/* Take Profit */}
+            <div>
+              <label className="text-xs font-semibold text-slate-300 mb-1 block">Take Profit Target ($0 = Off)</label>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={config.takeProfit}
+                onChange={(e) => handleConfigChange({ takeProfit: Math.max(0, parseFloat(e.target.value) || 0) })}
+                className="w-full bg-slate-950 text-white font-mono font-bold text-sm rounded-xl px-3 py-2 border border-slate-800 focus:border-emerald-500 focus:outline-none"
+              />
+            </div>
+
+            {/* Stop Loss */}
+            <div>
+              <label className="text-xs font-semibold text-slate-300 mb-1 block">Stop Loss Ceiling ($0 = Off)</label>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={config.stopLoss}
+                onChange={(e) => handleConfigChange({ stopLoss: Math.max(0, parseFloat(e.target.value) || 0) })}
                 className="w-full bg-slate-950 text-white font-mono font-bold text-sm rounded-xl px-3 py-2 border border-slate-800 focus:border-emerald-500 focus:outline-none"
               />
             </div>

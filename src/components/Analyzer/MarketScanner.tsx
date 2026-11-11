@@ -671,6 +671,35 @@ export const MarketScanner: React.FC<MarketScannerProps> = ({
 
   return (
     <div className="space-y-5 pb-12 font-sans">
+      {/* 🚀 QUICK SWITCH BANNER TO LIVE MARKET ANALYZER */}
+      <div className="p-3.5 bg-gradient-to-r from-emerald-950/80 via-slate-900 to-teal-950/80 border border-emerald-500/40 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xl">
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-xl bg-emerald-500 text-slate-950 font-black animate-pulse">
+            <Activity className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="text-xs font-bold text-white flex items-center gap-2">
+              <span>Looking for Live Market Analyzer (EMA 9/21, Bollinger Bands & Digits)?</span>
+              <span className="text-[10px] px-2 py-0.2 rounded-full bg-emerald-500 text-slate-950 font-black uppercase">
+                New Engine
+              </span>
+            </div>
+            <div className="text-[11px] text-slate-400 mt-0.5">
+              Live Deriv script analysis with audio alerts, pop-up signals and 1-click trade options.
+            </div>
+          </div>
+        </div>
+        {onNavigateTab && (
+          <button
+            onClick={() => onNavigateTab('live_analyzer')}
+            className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs transition-all shadow-md shadow-emerald-500/20 shrink-0 flex items-center gap-1.5 cursor-pointer"
+          >
+            <span>Open Live Analyzer</span>
+            <ArrowRight className="w-4 h-4" />
+          </button>
+        )}
+      </div>
+
       {/* ============================================================== */}
       {/* 🚀 PROMINENT FEATURE: DIGIT 5 AUTO SCANNER BOT CONTROL PANEL   */}
       {/* ============================================================== */}
