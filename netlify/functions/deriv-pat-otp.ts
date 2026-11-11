@@ -20,7 +20,7 @@ export default async (request: Request) => {
     const appId = String(body.app_id || process.env.DERIV_APP_ID || "").trim();
     const pat = String(body.pat || "").trim();
     const accountId = String(body.account_id || "").trim();
-    if (!/^\\d{1,12}$/.test(appId)) return json(400, { success: false, error: "Configure a valid numeric DERIV_APP_ID in Netlify or enter your numeric Deriv App ID." });
+    if (!/^\d{1,12}$/.test(appId)) return json(400, { success: false, error: "Configure a valid numeric DERIV_APP_ID in Netlify or enter your numeric Deriv App ID." });
     if (pat.length < 10 || pat.length > 4096) return json(400, { success: false, error: "Enter a valid Deriv Personal Access Token." });
     if (!accountId || accountId.length > 128) return json(400, { success: false, error: "Select a valid Deriv account." });
 
