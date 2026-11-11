@@ -10,14 +10,14 @@ function json(status: number, body: unknown) {
 export default async (request: Request) => {
   if (request.method !== "POST") return json(405, { success: false, error: "Method not allowed." });
   const origin = request.headers.get("origin");
-  const allowed = (Deno.env.get("DERIV_ALLOWED_ORIGINS") || "").split(",").map(v => v.trim()).filter(Boolean);
+  const allowed = (process.env.DERIV_ALLOWED_ORIGINS || "").split(",").map(v => v.trim()).filter(Boolean);
   if (!origin || (allowed.length && !allowed.includes(origin))) {
     return json(403, { success: false, error: "Request origin is not allowed. Check Ngamia1's DERIV_ALLOWED_ORIGINS setting." });
   }
 
   try {
     const body = await request.json() as { app_id?: string; pat?: string };
-    const appId = String(body.app_id || Deno.env.get("DERIV_APP_ID") || "").trim();
+    const appId = String(body.app_id || process.env.DERIV_APP_ID || "").trim();
     const pat = String(body.pat || "").trim();
     if (!/^\\d{1,12}$/.test(appId)) return json(400, { success: false, error: "Configure a valid numeric DERIV_APP_ID in Netlify or enter your numeric Deriv App ID." });
     if (pat.length < 10 || pat.length > 4096) return json(400, { success: false, error: "Enter a valid Deriv Personal Access Token." });
