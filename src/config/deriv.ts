@@ -9,7 +9,7 @@ export const DERIV_WEBSOCKET_APP_ID = '1089';
 export const REGISTERED_DERIV_APP_ID =
   (typeof import.meta !== 'undefined' && (import.meta as any).env && (import.meta as any).env.VITE_DERIV_APP_ID)
     ? (import.meta as any).env.VITE_DERIV_APP_ID
-    : '34O00AdC2O6jw2JRyd0WG';
+    : '1089';
 
 export const STING_REDIRECT_URI =
   (typeof import.meta !== 'undefined' && (import.meta as any).env && (import.meta as any).env.VITE_DERIV_REDIRECT_URI)
