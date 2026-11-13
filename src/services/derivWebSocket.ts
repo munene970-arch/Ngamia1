@@ -58,6 +58,24 @@ export function getMarketPipSize(symbol?: string): number {
   return DERIV_MARKET_PIP_SIZES[symbol] ?? 2;
 }
 
+/**
+ * Rough UI-only payout estimate for Higher/Lower barrier planning.
+ * Actual payout is determined by Deriv's live proposal and is never guaranteed
+ * by this estimate. This helper does not alter purchase or execution logic.
+ */
+export function calculateDerivPayoutMultiplier(symbol: string, barrierOffset: number): number {
+  const referenceOffsets: Record<string, number> = {
+    R_10: 1.10, R_25: 1.80, R_50: 0.85, R_75: 22.50, R_100: 0.45,
+    '1HZ10V': 0.85, '1HZ15V': 1.00, '1HZ25V': 1.50, '1HZ30V': 1.80,
+    '1HZ50V': 0.80, '1HZ75V': 20.00, '1HZ90V': 22.00, '1HZ100V': 0.45,
+  };
+  const offset = Math.abs(Number(barrierOffset));
+  const reference = referenceOffsets[symbol];
+  if (!Number.isFinite(offset) || offset <= 0 || !reference) return 1;
+  // Planning estimate only: scale from the app's configured reference barrier.
+  return Math.max(1, Number((11 * Math.pow(offset / reference, 1.2)).toFixed(2)));
+}
+
 export function extractDerivLastDigit(quote: number | string, pipSize?: number, symbol?: string): number {
   if (typeof quote === 'string') {
     const clean = quote.trim();
